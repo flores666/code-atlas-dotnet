@@ -55,6 +55,8 @@
   <StreamGeometry x:Key="Icon.Explorer">M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z</StreamGeometry>
   <StreamGeometry x:Key="Icon.Search">M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14z M16.2 16.2 20 20</StreamGeometry>
   <StreamGeometry x:Key="Icon.Diagnostics">M12 4 21 20H3z M12 10v4 M12 17h0.01</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Endpoints">M4 8h16 M4 16h16 M9 4 7 20 M17 4l-2 16</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Infrastructure">M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7 M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3</StreamGeometry>
   <StreamGeometry x:Key="Icon.Graph">M6 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M18 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M7.6 8.6 11 14 M16.4 8.6 13 14</StreamGeometry>
   <StreamGeometry x:Key="Icon.Refresh">M20 12a8 8 0 1 1-2.3-5.6 M20 3v4h-4</StreamGeometry>
 

@@ -36,11 +36,49 @@ public sealed class GraphViewModel : ObservableObject
         RelationKind.References,
     ];
 
+    /// <summary>
+    /// Wiring is drawn ahead of a call: when a controller both injects a service and calls
+    /// into it, or a repository both reads an entity and returns it, the wiring — or the
+    /// resource — is the more informative of the two. Ordered within itself so a write to
+    /// an entity outranks a read of it.
+    /// </summary>
+    private static readonly RelationKind[] StructuralFirst =
+    [
+        RelationKind.Resolves,
+        RelationKind.Injects,
+        RelationKind.DeclaresEntity,
+        RelationKind.ConfiguresEntity,
+        RelationKind.CreatesEntity,
+        RelationKind.ModifiesEntity,
+        RelationKind.DeletesEntity,
+        RelationKind.ReadsEntity,
+        RelationKind.RelatesToEntity,
+        RelationKind.ReadsConfiguration,
+        RelationKind.UsesExternal,
+    ];
+
+    /// <summary>
+    /// The edges a flow is made of, whichever end it is read from: what calls what, how it
+    /// is wired, and where it lands. References and signature types answer a different
+    /// question and would bury this one.
+    /// </summary>
+    private static readonly RelationGroupKind[] FlowGroups =
+    [
+        RelationGroupKind.Calls,
+        RelationGroupKind.Composition,
+        RelationGroupKind.Implementations,
+        RelationGroupKind.Database,
+        RelationGroupKind.Configuration,
+        RelationGroupKind.ExternalServices,
+    ];
+
     private readonly HashSet<long> _expanded = [];
     private readonly GraphCommands _commands;
 
     private SymbolIndexDatabase? _database;
     private IndexedSymbol? _root;
+    private IReadOnlyList<long> _seeds = [];
+    private string? _rootCaption;
     private GraphNodeViewModel? _selectedNode;
     private int _generation;
 
@@ -59,6 +97,10 @@ public sealed class GraphViewModel : ObservableObject
     private bool _showInheritance = true;
     private bool _showImplementations = true;
     private bool _showTypeDependencies = true;
+    private bool _showComposition = true;
+    private bool _showDatabase = true;
+    private bool _showConfiguration = true;
+    private bool _showExternalServices = true;
 
     public GraphViewModel()
     {
@@ -85,7 +127,7 @@ public sealed class GraphViewModel : ObservableObject
 
     public bool HasRoot => _root is not null;
 
-    public string RootTitle => _root?.Display ?? "No symbol selected";
+    public string RootTitle => _rootCaption ?? _root?.Display ?? "No symbol selected";
 
     public string RootSubtitle => _root is { } root
         ? $"{SymbolGlyph.Keyword(root.Kind)} · {root.FullyQualifiedName}"
@@ -194,6 +236,34 @@ public sealed class GraphViewModel : ObservableObject
         set => SetFilter(ref _showTypeDependencies, value);
     }
 
+    /// <summary>Injection and container resolution: how the application is wired together.</summary>
+    public bool ShowComposition
+    {
+        get => _showComposition;
+        set => SetFilter(ref _showComposition, value);
+    }
+
+    /// <summary>Entities, the contexts that declare them, and what reads and writes them.</summary>
+    public bool ShowDatabase
+    {
+        get => _showDatabase;
+        set => SetFilter(ref _showDatabase, value);
+    }
+
+    /// <summary>What binds and reads configuration.</summary>
+    public bool ShowConfiguration
+    {
+        get => _showConfiguration;
+        set => SetFilter(ref _showConfiguration, value);
+    }
+
+    /// <summary>Where the application crosses out to infrastructure it does not own.</summary>
+    public bool ShowExternalServices
+    {
+        get => _showExternalServices;
+        set => SetFilter(ref _showExternalServices, value);
+    }
+
     /// <summary>Set by the shell: the graph only queries while it is the visible section.</summary>
     public bool IsActive
     {
@@ -214,9 +284,16 @@ public sealed class GraphViewModel : ObservableObject
     }
 
     /// <summary>Points the graph at a symbol, discarding any expansion of the previous one.</summary>
-    public void SetRoot(IndexedSymbol? root)
+    /// <param name="seeds">
+    /// Extra symbols to walk from alongside the root. An endpoint supplies its controller,
+    /// which is what holds the injected dependencies the action itself does not name.
+    /// </param>
+    /// <param name="caption">Overrides the heading, so an endpoint's graph is titled by its route.</param>
+    public void SetRoot(IndexedSymbol? root, IReadOnlyList<long>? seeds = null, string? caption = null)
     {
         _root = root;
+        _seeds = seeds ?? [];
+        _rootCaption = caption;
         _expanded.Clear();
         _isStale = true;
 
@@ -272,16 +349,22 @@ public sealed class GraphViewModel : ObservableObject
             Depth = Depth,
             Kinds = SelectedKinds(),
             Expanded = _expanded.ToList(),
+            Seeds = _seeds,
         };
 
         try
         {
-            var graph = await Task.Run(() => NeighborhoodBuilder.Build(database, root.Id, options));
+            var (graph, labels) = await Task.Run(() =>
+            {
+                var built = NeighborhoodBuilder.Build(database, root.Id, options);
+                return (built, database.GetInfrastructureLabels(
+                    built.Nodes.Select(node => node.Symbol.Id).ToList()));
+            });
 
             // A newer request finished first; its result is the current one.
             if (generation == _generation)
             {
-                Apply(graph);
+                Apply(graph, labels);
             }
         }
         finally
@@ -302,6 +385,10 @@ public sealed class GraphViewModel : ObservableObject
         Add(_showInheritance, RelationGroupKind.Inheritance);
         Add(_showImplementations, RelationGroupKind.Implementations);
         Add(_showTypeDependencies, RelationGroupKind.TypeDependencies);
+        Add(_showComposition, RelationGroupKind.Composition);
+        Add(_showDatabase, RelationGroupKind.Database);
+        Add(_showConfiguration, RelationGroupKind.Configuration);
+        Add(_showExternalServices, RelationGroupKind.ExternalServices);
 
         return kinds;
 
@@ -314,7 +401,7 @@ public sealed class GraphViewModel : ObservableObject
         }
     }
 
-    private void Apply(SymbolGraph? graph)
+    private void Apply(SymbolGraph? graph, IReadOnlyDictionary<long, string>? labels = null)
     {
         Nodes.Clear();
         Edges.Clear();
@@ -336,7 +423,8 @@ public sealed class GraphViewModel : ObservableObject
                 node,
                 isRoot: node.Symbol.Id == graph.RootId,
                 isExpanded: _expanded.Contains(node.Symbol.Id),
-                _commands);
+                _commands,
+                labels is not null && labels.TryGetValue(node.Symbol.Id, out var label) ? label : null);
 
             byId[node.Symbol.Id] = viewModel;
             Nodes.Add(viewModel);
@@ -385,7 +473,10 @@ public sealed class GraphViewModel : ObservableObject
     {
         var merged = new Dictionary<(long Low, long High), GraphEdgeViewModel>();
 
-        foreach (var edge in edges.OrderBy(edge => Array.IndexOf(EdgePriority, edge.Kind)))
+        foreach (var edge in edges
+                     .OrderBy(edge => Array.IndexOf(StructuralFirst, edge.Kind) >= 0 ? 0 : 1)
+                     .ThenBy(edge => Array.IndexOf(StructuralFirst, edge.Kind))
+                     .ThenBy(edge => Array.IndexOf(EdgePriority, edge.Kind)))
         {
             if (edge.SourceId == edge.TargetId ||
                 !nodes.TryGetValue(edge.SourceId, out var source) ||
@@ -470,6 +561,73 @@ public sealed class GraphViewModel : ObservableObject
             SetRoot(node.Symbol);
             NodeSelected?.Invoke(node.Id);
         }
+    }
+
+    /// <summary>
+    /// Frames the graph on one endpoint's flow: the action and the type that holds its
+    /// dependencies, deep enough to reach what an implementation itself depends on.
+    /// </summary>
+    public void FocusEndpoint(IndexedSymbol handler, IReadOnlyList<long> seeds, string caption) =>
+        Focus(handler, seeds, caption, EndpointFlowDepth, FlowGroups);
+
+    /// <summary>
+    /// Frames the graph on one resource — an entity, an options type, a boundary — showing
+    /// what reaches it rather than what it is made of.
+    /// </summary>
+    public void FocusResource(IndexedSymbol resource, string caption) =>
+        Focus(resource, [], caption, ResourceFlowDepth, FlowGroups);
+
+    /// <summary>The depth an endpoint's flow needs to reach an implementation's own dependencies.</summary>
+    public const int EndpointFlowDepth = 3;
+
+    /// <summary>
+    /// A resource sits at the far end of the same flow, so reaching back up to the
+    /// endpoint takes the hops the other direction spent getting down to it.
+    /// </summary>
+    public const int ResourceFlowDepth = 4;
+
+    /// <summary>
+    /// Reframes the graph on one question, narrowed to the edges that answer it.
+    /// </summary>
+    /// <remarks>
+    /// The filters are set rather than left alone because a flow asks a specific question,
+    /// and references and signature types answer a different one. Every chip stays visible
+    /// and one click puts them back.
+    /// </remarks>
+    private void Focus(
+        IndexedSymbol root,
+        IReadOnlyList<long> seeds,
+        string caption,
+        int depth,
+        IReadOnlyList<RelationGroupKind> groups)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+
+        // Applied before the root, so the whole reframing costs one query rather than one
+        // per property.
+        _depth = depth;
+        _showCalls = groups.Contains(RelationGroupKind.Calls);
+        _showReferences = groups.Contains(RelationGroupKind.References);
+        _showInheritance = groups.Contains(RelationGroupKind.Inheritance);
+        _showImplementations = groups.Contains(RelationGroupKind.Implementations);
+        _showTypeDependencies = groups.Contains(RelationGroupKind.TypeDependencies);
+        _showComposition = groups.Contains(RelationGroupKind.Composition);
+        _showDatabase = groups.Contains(RelationGroupKind.Database);
+        _showConfiguration = groups.Contains(RelationGroupKind.Configuration);
+        _showExternalServices = groups.Contains(RelationGroupKind.ExternalServices);
+
+        foreach (var property in (string[])
+                 [
+                     nameof(Depth), nameof(IsDepth1), nameof(IsDepth2), nameof(IsDepth3),
+                     nameof(ShowCalls), nameof(ShowComposition), nameof(ShowReferences),
+                     nameof(ShowTypeDependencies), nameof(ShowInheritance), nameof(ShowImplementations),
+                     nameof(ShowDatabase), nameof(ShowConfiguration), nameof(ShowExternalServices),
+                 ])
+        {
+            OnPropertyChanged(property);
+        }
+
+        SetRoot(root, seeds, caption);
     }
 
     private void OpenSource(GraphNodeViewModel? node)

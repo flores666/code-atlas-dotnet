@@ -54,6 +54,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private SymbolDetailsViewModel? _details;
     private TreeNodeViewModel? _selectedNode;
     private SearchResultViewModel? _selectedSearchResult;
+    private EndpointViewModel? _selectedEndpoint;
+    private string _endpointFilter = string.Empty;
+    private string _infrastructureFilter = string.Empty;
+    private InfrastructureView _infrastructureView = InfrastructureView.Database;
+    private EntityRowViewModel? _selectedEntity;
+    private MigrationRowViewModel? _selectedMigration;
+    private ConfigurationRowViewModel? _selectedConfiguration;
+    private ExternalRowViewModel? _selectedExternalService;
 
     public MainWindowViewModel()
     {
@@ -63,6 +71,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         OpenSourceCommand = new RelayCommand(_ => OpenSource(), _ => Details?.CanOpenSource == true);
         NavigateCommand = new RelayCommand(parameter => Navigate(parameter as SymbolLink));
         ShowInGraphCommand = new RelayCommand(_ => ActiveSection = AppSection.Graph, _ => HasDetails);
+        OpenEndpointSourceCommand = new RelayCommand(
+            parameter => OpenEndpointSource(parameter as EndpointViewModel));
+        SetInfrastructureViewCommand = new RelayCommand(
+            parameter => InfrastructureView = (InfrastructureView)parameter!);
 
         // Picking a node explores from where the reader already is, so it updates the
         // details pane without moving the graph out from under them; "focus here" is the
@@ -124,6 +136,288 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     /// <summary>The semantic neighbourhood of the selected symbol.</summary>
     public GraphViewModel Graph { get; } = new();
+
+    // ---- endpoints ----------------------------------------------------------
+
+    /// <summary>Every HTTP entry point the index found, filtered by <see cref="EndpointFilter"/>.</summary>
+    public ObservableCollection<EndpointViewModel> Endpoints { get; } = [];
+
+    public bool HasEndpoints => Endpoints.Count > 0;
+
+    public int EndpointCount => _allEndpoints.Count;
+
+    public string EndpointFilter
+    {
+        get => _endpointFilter;
+        set
+        {
+            if (SetProperty(ref _endpointFilter, value))
+            {
+                RefreshEndpoints();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Selecting an endpoint opens its flow: the graph is rooted at the action and seeded
+    /// with the type that carries the injected dependencies, then the section switches to it.
+    /// </summary>
+    public EndpointViewModel? SelectedEndpoint
+    {
+        get => _selectedEndpoint;
+        set
+        {
+            if (!SetProperty(ref _selectedEndpoint, value) || value is null)
+            {
+                return;
+            }
+
+            if (value.Endpoint.HandlerSymbolId is not { } handlerId)
+            {
+                StatusMessage = $"{value.HttpMethod} {value.Route} is handled inline and has no declaration to explore.";
+                return;
+            }
+
+            _ = ShowEndpointAsync(value, handlerId);
+        }
+    }
+
+    public RelayCommand OpenEndpointSourceCommand { get; }
+
+    private async Task ShowEndpointAsync(EndpointViewModel endpoint, long handlerId)
+    {
+        if (_database is not { } database)
+        {
+            return;
+        }
+
+        var details = await Task.Run(() => database.GetDetails(handlerId));
+        Details = details is null ? null : new SymbolDetailsViewModel(details, NavigateCommand);
+
+        if (details is not null)
+        {
+            Graph.FocusEndpoint(
+                details.Symbol,
+                endpoint.Endpoint.DeclaringTypeSymbolId is { } declaringId ? [declaringId] : [],
+                $"{endpoint.HttpMethod} {endpoint.Route}");
+        }
+
+        ActiveSection = AppSection.Graph;
+    }
+
+    private void OpenEndpointSource(EndpointViewModel? endpoint)
+    {
+        if (endpoint?.Endpoint is { FilePath: { } path } target)
+        {
+            StatusMessage = SourceLauncher.Open(path, target.Line) ?? $"Opened {path}:{target.Line}";
+        }
+    }
+
+    private void RefreshEndpoints()
+    {
+        Endpoints.Clear();
+
+        var filter = EndpointFilter.Trim();
+        foreach (var endpoint in _allEndpoints)
+        {
+            if (filter.Length == 0 ||
+                endpoint.Route.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                endpoint.Handler.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                endpoint.HttpMethod.Contains(filter, StringComparison.OrdinalIgnoreCase))
+            {
+                Endpoints.Add(endpoint);
+            }
+        }
+
+        OnPropertyChanged(nameof(HasEndpoints));
+        OnPropertyChanged(nameof(EndpointCount));
+    }
+
+    // ---- infrastructure -----------------------------------------------------
+
+    /// <summary>
+    /// The three infrastructure lists, shown one at a time. They are the same three cuts
+    /// the graph filters by, seen as tables instead of as edges.
+    /// </summary>
+    public ObservableCollection<EntityRowViewModel> Entities { get; } = [];
+
+    public ObservableCollection<MigrationRowViewModel> Migrations { get; } = [];
+
+    public ObservableCollection<ConfigurationRowViewModel> ConfigurationKeys { get; } = [];
+
+    public ObservableCollection<ExternalRowViewModel> ExternalServices { get; } = [];
+
+    public RelayCommand SetInfrastructureViewCommand { get; }
+
+    public InfrastructureView InfrastructureView
+    {
+        get => _infrastructureView;
+        set
+        {
+            if (SetProperty(ref _infrastructureView, value))
+            {
+                OnPropertyChanged(nameof(IsDatabaseView));
+                OnPropertyChanged(nameof(IsConfigurationView));
+                OnPropertyChanged(nameof(IsExternalView));
+                OnPropertyChanged(nameof(InfrastructureSubtitle));
+            }
+        }
+    }
+
+    public bool IsDatabaseView => InfrastructureView == InfrastructureView.Database;
+
+    public bool IsConfigurationView => InfrastructureView == InfrastructureView.Configuration;
+
+    public bool IsExternalView => InfrastructureView == InfrastructureView.ExternalServices;
+
+    public string InfrastructureSubtitle => InfrastructureView switch
+    {
+        InfrastructureView.Database =>
+            "EF Core entities, the contexts that declare them, and the migrations that touch their tables.",
+        InfrastructureView.Configuration =>
+            "Configuration keys, sections and options types found in source.",
+        _ => "Where this application reaches infrastructure it does not own.",
+    };
+
+    public string InfrastructureFilter
+    {
+        get => _infrastructureFilter;
+        set
+        {
+            if (SetProperty(ref _infrastructureFilter, value))
+            {
+                RefreshInfrastructure();
+            }
+        }
+    }
+
+    public bool HasEntities => Entities.Count > 0;
+
+    public bool HasMigrations => Migrations.Count > 0;
+
+    public bool HasConfigurationKeys => ConfigurationKeys.Count > 0;
+
+    public bool HasExternalServices => ExternalServices.Count > 0;
+
+    public int InfrastructureCount =>
+        _allEntities.Count + _allConfiguration.Count + _allExternalServices.Count;
+
+    public bool HasInfrastructure => InfrastructureCount > 0;
+
+    public EntityRowViewModel? SelectedEntity
+    {
+        get => _selectedEntity;
+        set
+        {
+            if (SetProperty(ref _selectedEntity, value) && value is not null)
+            {
+                Explore(value.SymbolId, value.HasTable ? $"{value.Entity} · {value.Table}" : value.Entity);
+            }
+        }
+    }
+
+    public MigrationRowViewModel? SelectedMigration
+    {
+        get => _selectedMigration;
+        set
+        {
+            if (SetProperty(ref _selectedMigration, value) && value is not null)
+            {
+                Explore(value.SymbolId, value.Name);
+            }
+        }
+    }
+
+    public ConfigurationRowViewModel? SelectedConfiguration
+    {
+        get => _selectedConfiguration;
+        set
+        {
+            if (SetProperty(ref _selectedConfiguration, value) && value is not null)
+            {
+                Explore(value.SymbolId, value.Key);
+            }
+        }
+    }
+
+    public ExternalRowViewModel? SelectedExternalService
+    {
+        get => _selectedExternalService;
+        set
+        {
+            if (SetProperty(ref _selectedExternalService, value) && value is not null)
+            {
+                Explore(value.SymbolId, $"{value.Consumer} · {value.Resource}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Opens a resource's flow the way selecting an endpoint opens one: the graph is rooted
+    /// on it and framed to show what reaches it.
+    /// </summary>
+    private void Explore(long? symbolId, string caption)
+    {
+        if (symbolId is not { } id)
+        {
+            StatusMessage = $"{caption} has no declaration in this solution to explore.";
+            return;
+        }
+
+        _ = ShowResourceAsync(id, caption);
+    }
+
+    private async Task ShowResourceAsync(long symbolId, string caption)
+    {
+        if (_database is not { } database)
+        {
+            return;
+        }
+
+        var details = await Task.Run(() => database.GetDetails(symbolId));
+        Details = details is null ? null : new SymbolDetailsViewModel(details, NavigateCommand);
+
+        if (details is not null)
+        {
+            Graph.FocusResource(details.Symbol, caption);
+            ActiveSection = AppSection.Graph;
+        }
+    }
+
+    private void RefreshInfrastructure()
+    {
+        var filter = InfrastructureFilter.Trim();
+
+        Fill(Entities, _allEntities, row =>
+            Matches(filter, row.Entity, row.Table, row.Context, row.Configuration));
+        Fill(Migrations, _allMigrations, row => Matches(filter, row.Name, row.Context, row.Tables));
+        Fill(ConfigurationKeys, _allConfiguration, row =>
+            Matches(filter, row.Key, row.Options, row.Consumer));
+        Fill(ExternalServices, _allExternalServices, row =>
+            Matches(filter, row.Resource, row.Consumer, row.Client, row.TechnologyLabel));
+
+        foreach (var property in (string[])
+                 [
+                     nameof(HasEntities), nameof(HasMigrations), nameof(HasConfigurationKeys),
+                     nameof(HasExternalServices), nameof(InfrastructureCount), nameof(HasInfrastructure),
+                 ])
+        {
+            OnPropertyChanged(property);
+        }
+
+        static void Fill<T>(ObservableCollection<T> view, List<T> all, Func<T, bool> keep)
+        {
+            view.Clear();
+            foreach (var row in all.Where(keep))
+            {
+                view.Add(row);
+            }
+        }
+
+        static bool Matches(string filter, params string[] fields) =>
+            filter.Length == 0 ||
+            fields.Any(field => field.Contains(filter, StringComparison.OrdinalIgnoreCase));
+    }
 
     // ---- index summary ------------------------------------------------------
 
@@ -209,6 +503,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         get => _progressMaximum;
         private set => SetProperty(ref _progressMaximum, value);
     }
+
+    /// <summary>The unfiltered lists; the observable collections above are views of them.</summary>
+    private readonly List<EndpointViewModel> _allEndpoints = [];
+    private readonly List<EntityRowViewModel> _allEntities = [];
+    private readonly List<MigrationRowViewModel> _allMigrations = [];
+    private readonly List<ConfigurationRowViewModel> _allConfiguration = [];
+    private readonly List<ExternalRowViewModel> _allExternalServices = [];
 
     public ObservableCollection<IndexDiagnostic> Diagnostics { get; } = [];
 
@@ -492,6 +793,22 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         RefreshDiagnosticCounts();
         Graph.SetDatabase(_database);
 
+        _allEndpoints.Clear();
+        _allEndpoints.AddRange(_database.GetEndpoints().Select(endpoint => new EndpointViewModel(endpoint)));
+        RefreshEndpoints();
+
+        _allEntities.Clear();
+        _allEntities.AddRange(_database.GetEntities().Select(entity => new EntityRowViewModel(entity)));
+        _allMigrations.Clear();
+        _allMigrations.AddRange(_database.GetMigrations().Select(migration => new MigrationRowViewModel(migration)));
+        _allConfiguration.Clear();
+        _allConfiguration.AddRange(
+            _database.GetConfigurationUsages().Select(usage => new ConfigurationRowViewModel(usage)));
+        _allExternalServices.Clear();
+        _allExternalServices.AddRange(
+            _database.GetExternalDependencies().Select(dependency => new ExternalRowViewModel(dependency)));
+        RefreshInfrastructure();
+
         if (_database.ReadMetadata() is { } metadata)
         {
             _hasIndex = true;
@@ -675,6 +992,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         ProjectNodes.Clear();
         Projects.Clear();
+        _allEndpoints.Clear();
+        RefreshEndpoints();
+        _allEntities.Clear();
+        _allMigrations.Clear();
+        _allConfiguration.Clear();
+        _allExternalServices.Clear();
+        RefreshInfrastructure();
         SearchResults.Clear();
         OnPropertyChanged(nameof(HasSearchResults));
         Diagnostics.Clear();

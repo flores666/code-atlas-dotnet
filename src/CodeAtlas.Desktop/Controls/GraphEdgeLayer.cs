@@ -178,6 +178,19 @@ public sealed class GraphEdgeLayer : Control
             RelationKind.Inherits => (EmphasisBrush, 1.6, new[] { 5d, 3d }),
             RelationKind.Implements or RelationKind.Overrides => (EmphasisBrush, 1.4, new[] { 2d, 3d }),
             RelationKind.Calls => (EmphasisBrush, 1.6, null),
+
+            // Composition is the heaviest line on the surface: it is what the endpoint
+            // flow is read along, and it crosses from an abstraction to a concrete type.
+            RelationKind.Injects => (EmphasisBrush, 2.0, null),
+            RelationKind.Resolves => (EmphasisBrush, 2.0, new[] { 6d, 3d }),
+
+            // Infrastructure reads as heavily as composition, because it is the other half
+            // of the same flow: a write to a resource is drawn solid, a read of one dashed.
+            RelationKind.DeclaresEntity or RelationKind.ConfiguresEntity => (EmphasisBrush, 1.8, new[] { 4d, 2d }),
+            RelationKind.CreatesEntity or RelationKind.ModifiesEntity or RelationKind.DeletesEntity
+                or RelationKind.UsesExternal => (EmphasisBrush, 2.0, null),
+            RelationKind.ReadsEntity or RelationKind.ReadsConfiguration => (EmphasisBrush, 1.6, new[] { 3d, 2d }),
+            RelationKind.RelatesToEntity => (LineBrush, 1.6, new[] { 8d, 3d }),
             RelationKind.ParameterType or RelationKind.ReturnType => (LineBrush, 1.4, new[] { 1d, 3d }),
             _ => (LineBrush, 1.2, null),
         };

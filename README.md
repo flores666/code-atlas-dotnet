@@ -4,10 +4,14 @@ A local-first, read-only semantic explorer for C#/.NET solutions. It loads a sol
 Roslyn, indexes the declarations and exact semantic relations into a local SQLite file, and
 lets you search, inspect and map them offline.
 
-**MVP 1** — the semantic code map. Declarations, calls, references, implementations,
-inheritance and type dependencies, all compiler-derived, plus a bounded graph of the
-neighbourhood around any symbol. No DI/EF analysis, endpoint understanding, Git diffing,
-impact analysis, AI, embeddings, MCP or architecture detection.
+**MVP 3** — the semantic code map, how an ASP.NET Core application is composed, and where
+it meets everything outside itself. Declarations, calls, references, implementations,
+inheritance and type dependencies; a bounded graph of the neighbourhood around any symbol;
+DI registrations and the HTTP endpoints they are wired behind; the EF Core model and what
+reads and writes it; configuration keys and the options types they bind; and the
+infrastructure boundaries the application crosses. No runtime tracing, Kubernetes
+analysis, message-broker topology, Git intelligence, AI, embeddings, impact scoring or
+context export.
 
 ## Running
 
@@ -23,8 +27,33 @@ and **Graph** maps its neighbourhood: callers, callees, implementations, inherit
 types its signature depends on. Depth is 1 by default and configurable; edge kinds filter
 independently; a node with more neighbours than are shown offers them behind a `+n` button.
 
+**Endpoints** lists the HTTP entry points found in source. Select one and the graph opens on
+its flow — the action, the controller, the services it injects, and what the container
+resolves those to:
+
 ```
-dotnet test              # 67 tests, including a real end-to-end indexing run
+GET /users/{id}  ->  UsersController.Get  ->  IUserService  ->  UserService  ->  IUserRepository
+```
+
+**Infrastructure** lists the three things an application depends on that are not code in it:
+its EF Core entities with the contexts, tables and migrations behind them; the configuration
+keys and options types it binds; and the HTTP, gRPC, cache, broker, storage and file-system
+boundaries it crosses. Select a row and the graph opens on what reaches it, so the flow can
+be read from either end:
+
+```
+GET /orders/{id}  ->  OrdersController  ->  IOrderService  ->  IOrderRepository
+                  ->  SqlOrderRepository  ->  ShopContext  ->  Order (sales.orders)
+
+OrderService  ->  ICrmClient  ->  CrmWebServicesClient  ->  HttpClient "crm"  ->  CrmOptions
+```
+
+The graph filters by the same three cuts — **Database**, **Configuration**, **External
+services** — alongside the existing ones, and a node standing on infrastructure is badged
+with the table it maps to or the technology it talks to.
+
+```
+dotnet test              # 124 tests, including a real end-to-end indexing run
 ```
 
 Requires the .NET 10 SDK at run time: Roslyn loads projects through the SDK's MSBuild.
@@ -67,6 +96,31 @@ look at a hub is readable, and expanding a node by hand lifts it for that node. 
 the index and never Roslyn, so a graph query costs a few indexed lookups rather than a
 recompilation.
 
+**Composition is read, never executed.** `ServiceRegistrationCollector` recognises a
+registration by binding the call to an extension method on `IServiceCollection` whose name
+carries a lifetime — not by matching text, and not by where the call sits, which is why a
+registration inside a project's own `AddInfrastructure` extension is found exactly like one
+in `Program.cs`. What a factory returns is recovered only when its body is a single object
+creation, and is always `Inferred`: the factory may branch, and CodeAtlas does not run it.
+
+**A registration becomes a graph edge.** Each one contributes a `Resolves` edge from the
+service type to its implementation, and every type contributes `Injects` edges to what its
+constructors take. Those two are what let the ordinary MVP 1 walk cross from an interface to
+the concrete type behind it, so the endpoint flow is the same graph with a different root
+rather than a second traversal.
+
+**`Injects` duplicates the constructor's own parameter edges on purpose.** The edge is
+attributed to the *type* rather than to its constructor, so a type reaches the services it
+depends on in one hop. Without it the graph would need a constructor node in the middle of
+every composition path.
+
+**Only statically resolvable routing is listed.** Attribute routing on controllers, with
+`[controller]` and `[action]` expanded the way the framework expands them, and Minimal API
+registrations whose template is a constant — including the accumulated `MapGroup` prefixes,
+followed through the local a group is usually held in. Conventional routing depends on the
+route table assembled at start-up and is not guessed at, so an endpoint that is listed is
+one that exists.
+
 **Relations are resolved by name, after the fact.** A project can reference a symbol from a
 project that has not been indexed yet, so `SymbolCollector` emits relations naming both
 endpoints and `IndexWriteSession.Complete` resolves them to row ids in one pass once every
@@ -89,6 +143,61 @@ field.
 the rest are still indexed; a project whose compilation fails is stored as not-loaded; a file
 that cannot be analysed costs only that file. Nothing aborts the run. Cancelling mid-rebuild
 rolls the transaction back and leaves the previous index intact.
+
+**Infrastructure is read from the framework's own types, never from how a call is spelled.**
+`DbContext`, `DbSet<T>`, `IEntityTypeConfiguration<T>`, the EF metadata builders,
+`MigrationBuilder`, `IConfiguration`, `IOptions<T>` and the client types of each recognised
+technology are all matched by the fully qualified name the compiler bound. That is why a
+`Repository.Add` on something that is not a `DbSet` is not mistaken for an insert, and why
+recognising a new broker is a line in a table rather than a new analysis.
+
+**Nothing about the database is reconstructed.** A table name is recorded when it was
+written as a literal in `ToTable` or `[Table]`; when EF's naming convention decides it at
+run time the mapping simply carries no table, and says so. Usage is coarse on purpose:
+reaching a `DbSet` is a read unless the call is one of EF's add, update or remove verbs, and
+a migration reports the tables its operations name rather than the schema it produces. No
+SQL is assembled and no model is built.
+
+**An entity relationship is the navigation property that already exists.** A property whose
+type is another entity is a relationship, and the compiler recorded that as a `ReturnType`
+edge while collecting signatures. `IndexWriteSession.Complete` turns those into
+entity-to-entity edges in one join, so conventional models map without a second analysis
+pass; fluent `HasOne`/`HasMany` configuration contributes the same edge directly, read from
+the builder type the call hands back, which names both ends.
+
+**Configuration and infrastructure belong to the type, not to the member.** A read is
+attributed to the class it was written in, for the same reason `Injects` is: configuration
+and a Redis connection are properties of a component, and the graph should reach them in one
+hop rather than through a method node. Only statically discoverable names are kept — a key
+composed at run time is left out, and a section path is followed back along the receiver
+chain only as far as that chain is literal.
+
+**A typed client is a registration like any other.** `AddHttpClient<IClient, Client>()` and
+`AddGrpcClient<T>()` are read by `ServiceRegistrationCollector` as transient registrations,
+which is the lifetime the client factories give them. Without that the flow from an
+application service to the client behind an interface would stop at the interface. Their
+remaining arguments configure the client rather than build the service, so only their type
+arguments are read.
+
+**One row per component and technology.** A class that injects a Redis multiplexer and then
+calls through the database it hands back crosses one boundary, not two, so external
+dependencies are keyed by consumer and technology and the most specific reading wins — a
+typed-client registration, which knows the client's name, beats the bare injection of it.
+The boundary itself is named by the technology's own client type where the compilation has
+it, so every reading of Redis lands on the same symbol rather than on whichever extension
+class declared the call.
+
+**A boundary keeps its name even when it is outside the solution.** `UsesExternal` is stored
+with an unresolved target the way `Inherits` is, so `System.Net.Http.HttpClient` is listed
+against the client that uses it without being indexed. It is not drawn in the graph, which
+only draws edges with both ends inside the index — the badge on the node is what carries it
+there.
+
+**"Reached from" is a composition walk, not a call walk.** Finding the endpoints above a
+resource seeds on what names it, widened to the type that names it, and then follows only
+`Injects` and `Resolves` backwards. That chain is what an endpoint's flow is actually made
+of and it is short and narrow; following calls backwards would put half the solution in the
+answer the first time it crossed a hot method.
 
 **`record struct` is indexed as `Record`,** matching the keyword that was written rather than
 Roslyn's `TypeKind.Struct`.

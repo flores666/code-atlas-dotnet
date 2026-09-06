@@ -35,6 +35,15 @@ public sealed class SymbolDetailsViewModel
         ArgumentNullException.ThrowIfNull(details);
         ArgumentNullException.ThrowIfNull(navigateCommand);
 
+        Registrations = details.Registrations.Select(registration => new RegistrationViewModel(registration)).ToList();
+        EntityMappings = details.EntityMappings.Select(mapping => new EntityRowViewModel(mapping)).ToList();
+        Migrations = details.Migrations.Select(migration => new MigrationRowViewModel(migration)).ToList();
+        Configuration = details.Configuration.Select(usage => new ConfigurationRowViewModel(usage)).ToList();
+        ExternalDependencies = details.ExternalDependencies
+            .Select(dependency => new ExternalRowViewModel(dependency))
+            .ToList();
+        RelatedEndpoints = details.RelatedEndpoints.Select(endpoint => new EndpointViewModel(endpoint)).ToList();
+
         Symbol = details.Symbol;
 
         Header = details.Symbol.Display;
@@ -69,11 +78,27 @@ public sealed class SymbolDetailsViewModel
             ("Calls", details.Calls),
             ("Parameter types", details.ParameterTypes),
             ("Return type", details.ReturnTypes),
-            ("Constructor dependencies", details.ConstructorDependencies),
+            ("Constructor dependencies", details.Injects),
+            ("Registered implementations", details.Resolves),
+            ("Entities", details.DeclaredEntities),
+            ("Maps", details.ConfiguredEntities),
+            ("Reads entities", details.ReadsEntities),
+            ("Writes entities", details.WritesEntities),
+            ("Related entities", details.RelatedEntities),
+            ("Configuration", details.ReadsConfiguration),
+            ("External services", details.UsesExternal),
             ("References", details.References),
             ("Derived types", details.DerivedTypes),
             ("Implemented by", details.Implementors),
             ("Overridden by", details.OverriddenBy),
+            ("Injected by", details.InjectedBy),
+            ("Registered as", details.ResolvedBy),
+            ("Declared by", details.DeclaredBy),
+            ("Read by", details.Readers),
+            ("Written by", details.Writers),
+            ("Services on the way here", details.RelatedServices),
+            ("Configuration read by", details.ConfigurationReaders),
+            ("Reached from", details.ExternalConsumers),
             (Truncatable("Called by", details.CalledBy.Count, details.CalledByTotal), details.CalledBy),
             (Truncatable("Referenced by", details.ReferencedBy.Count, details.ReferencedByTotal),
                 details.ReferencedBy),
@@ -118,6 +143,40 @@ public sealed class SymbolDetailsViewModel
 
     /// <summary>Only the non-empty sections, so the pane shows no empty headings.</summary>
     public IReadOnlyList<RelationGroup> Groups { get; }
+
+    /// <summary>
+    /// The container registrations this symbol takes part in, whether as the service or as
+    /// the implementation. More than one is normal and meaningful.
+    /// </summary>
+    public IReadOnlyList<RegistrationViewModel> Registrations { get; }
+
+    public bool HasRegistrations => Registrations.Count > 0;
+
+    /// <summary>How this entity is mapped, or how this context maps what it owns.</summary>
+    public IReadOnlyList<EntityRowViewModel> EntityMappings { get; }
+
+    public bool HasEntityMappings => EntityMappings.Count > 0;
+
+    public IReadOnlyList<MigrationRowViewModel> Migrations { get; }
+
+    public bool HasMigrations => Migrations.Count > 0;
+
+    /// <summary>Configuration this symbol reads, or that binds to it when it is an options type.</summary>
+    public IReadOnlyList<ConfigurationRowViewModel> Configuration { get; }
+
+    public bool HasConfiguration => Configuration.Count > 0;
+
+    public IReadOnlyList<ExternalRowViewModel> ExternalDependencies { get; }
+
+    public bool HasExternalDependencies => ExternalDependencies.Count > 0;
+
+    /// <summary>
+    /// The HTTP entry points whose flow reaches this symbol. Found by walking composition
+    /// backwards, so a resource says which of the application's doors lead to it.
+    /// </summary>
+    public IReadOnlyList<EndpointViewModel> RelatedEndpoints { get; }
+
+    public bool HasRelatedEndpoints => RelatedEndpoints.Count > 0;
 
     /// <summary>Names a capped list so a partial answer never reads as a complete one.</summary>
     private static string Truncatable(string title, int shown, int total) =>

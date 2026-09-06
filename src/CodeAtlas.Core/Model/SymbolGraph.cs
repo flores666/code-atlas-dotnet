@@ -62,6 +62,16 @@ public sealed record GraphOptions
     /// </summary>
     public IReadOnlyList<long> Expanded { get; init; } = [];
 
+    /// <summary>
+    /// Extra symbols to walk from as though they were the root.
+    /// </summary>
+    /// <remarks>
+    /// An endpoint's flow needs two: the action, whose calls are the work it does, and the
+    /// controller, which is what carries the injected dependencies. Neither reaches the
+    /// other in one hop, so the request names both rather than the graph guessing.
+    /// </remarks>
+    public IReadOnlyList<long> Seeds { get; init; } = [];
+
     public int MaxNodes { get; init; } = DefaultMaxNodes;
 
     public int MaxNeighboursPerNode { get; init; } = DefaultMaxNeighboursPerNode;

@@ -6,7 +6,8 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace CodeAtlas.Core.Analysis;
 
 /// <summary>
-/// Extracts declarations and semantic relations from one Roslyn project.
+/// Analyses one Roslyn project: its declarations, the semantic relations between them,
+/// and how the application it belongs to is composed.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,6 +22,13 @@ namespace CodeAtlas.Core.Analysis;
 /// a single candidate is kept as <see cref="RelationProvenance.Inferred"/>, so a project
 /// with errors still maps, without that guess being presented as compiler truth.
 /// </para>
+/// <para>
+/// DI registrations, HTTP endpoints, the EF Core model, configuration reads and external
+/// dependencies are collected here rather than in passes of their own, because this is
+/// where a project's documents are already bound: the semantic model is the expensive
+/// part, and walking every document again to rebuild it would cost more than all of the
+/// analysis does.
+/// </para>
 /// </remarks>
 public sealed class SymbolCollector
 {
@@ -31,13 +39,27 @@ public sealed class SymbolCollector
     private readonly List<PendingRelation> _relations = [];
     private readonly HashSet<(string Source, RelationKind Kind, string Target)> _seen = [];
     private readonly List<IndexDiagnostic> _diagnostics = [];
-    private string? _projectName;
+    private readonly ServiceRegistrationCollector _registrations = new();
+    private readonly EndpointCollector _endpoints;
+    private readonly EntityFrameworkCollector _persistence;
+    private readonly ConfigurationCollector _configuration;
+    private readonly ExternalDependencyCollector _external;
+    private readonly string _projectName;
+
+    private SymbolCollector(string projectName)
+    {
+        _projectName = projectName;
+        _endpoints = new EndpointCollector(projectName);
+        _persistence = new EntityFrameworkCollector(projectName);
+        _configuration = new ConfigurationCollector(projectName);
+        _external = new ExternalDependencyCollector(projectName);
+    }
 
     public static async Task<ProjectIndexData> CollectAsync(Project project, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(project);
 
-        var collector = new SymbolCollector { _projectName = project.Name };
+        var collector = new SymbolCollector(project.Name);
         var indexedProject = new IndexedProject
         {
             Name = project.Name,
@@ -68,7 +90,7 @@ public sealed class SymbolCollector
 
             try
             {
-                await collector.CollectBodyRelationsAsync(document, cancellationToken).ConfigureAwait(false);
+                await collector.VisitDocumentAsync(document, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception e) when (e is not OperationCanceledException)
             {
@@ -76,15 +98,32 @@ public sealed class SymbolCollector
                 collector._diagnostics.Add(new IndexDiagnostic(
                     Model.DiagnosticSeverity.Warning,
                     project.Name,
-                    $"Could not analyse references in '{document.FilePath ?? document.Name}': {e.Message}"));
+                    $"Could not analyse '{document.FilePath ?? document.Name}': {e.Message}"));
             }
+        }
+
+        // Merged last, through the same guard the collector's own edges pass, so a
+        // relation found twice by two readings is still stored once.
+        foreach (var relation in collector._persistence.Relations
+                     .Concat(collector._configuration.Relations)
+                     .Concat(collector._external.Relations))
+        {
+            collector.AddPending(relation);
         }
 
         return new ProjectIndexData(
             indexedProject,
             collector._symbols,
             collector._relations,
-            collector._diagnostics);
+            collector._diagnostics)
+        {
+            Registrations = collector._registrations.Registrations,
+            Endpoints = collector._endpoints.Endpoints,
+            Entities = collector._persistence.Entities,
+            Migrations = collector._persistence.Migrations,
+            Configuration = collector._configuration.Usages,
+            ExternalDependencies = collector._external.Dependencies,
+        };
 
         static ProjectIndexData Failed(IndexedProject project, string message) =>
             new(project with { Loaded = false }, [], [],
@@ -126,6 +165,10 @@ public sealed class SymbolCollector
         }
 
         var fullyQualifiedName = AddSymbol(type, kind);
+        _endpoints.VisitType(type);
+        _persistence.VisitType(type);
+        _configuration.VisitType(type);
+        _external.VisitType(type);
 
         if (type.BaseType is { } baseType)
         {
@@ -163,6 +206,16 @@ public sealed class SymbolCollector
             var memberFullyQualifiedName = AddSymbol(member, memberKind);
             AddOverride(memberFullyQualifiedName, member);
             AddSignatureRelations(memberFullyQualifiedName, member);
+
+            // What a constructor takes, attributed to the type rather than the constructor,
+            // so the composition graph reaches a service in one hop.
+            if (member is IMethodSymbol { MethodKind: MethodKind.Constructor } constructor)
+            {
+                foreach (var parameter in constructor.Parameters)
+                {
+                    AddTypeDependency(fullyQualifiedName, RelationKind.Injects, parameter.Type, 0);
+                }
+            }
         }
     }
 
@@ -326,6 +379,15 @@ public sealed class SymbolCollector
         return fullyQualifiedName;
     }
 
+    /// <summary>Stores a relation a sub-collector already resolved to two names.</summary>
+    private void AddPending(PendingRelation relation)
+    {
+        if (_seen.Add((relation.SourceFullyQualifiedName, relation.Kind, relation.TargetFullyQualifiedName)))
+        {
+            _relations.Add(relation);
+        }
+    }
+
     private void AddRelation(
         string sourceFullyQualifiedName,
         RelationKind kind,
@@ -372,7 +434,10 @@ public sealed class SymbolCollector
 
     // ---- calls and references -----------------------------------------------
 
-    private async Task CollectBodyRelationsAsync(Document document, CancellationToken cancellationToken)
+    /// <summary>
+    /// Binds one document once and hands it to every consumer that needs a semantic model.
+    /// </summary>
+    private async Task VisitDocumentAsync(Document document, CancellationToken cancellationToken)
     {
         if (await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false) is not { } root ||
             await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false) is not { } model)
@@ -380,9 +445,22 @@ public sealed class SymbolCollector
             return;
         }
 
-        // Cached per declaration node: every relation inside one declaration shares a source.
-        var enclosing = new Dictionary<SyntaxNode, string?>();
+        var enclosing = new EnclosingSymbolResolver(model);
 
+        CollectBodyRelations(root, model, enclosing, cancellationToken);
+        _registrations.VisitDocument(root, model, cancellationToken);
+        _endpoints.VisitDocument(root, model, cancellationToken);
+        _persistence.VisitDocument(root, model, enclosing, cancellationToken);
+        _configuration.VisitDocument(root, model, enclosing, cancellationToken);
+        _external.VisitDocument(root, model, enclosing, cancellationToken);
+    }
+
+    private void CollectBodyRelations(
+        SyntaxNode root,
+        SemanticModel model,
+        EnclosingSymbolResolver enclosing,
+        CancellationToken cancellationToken)
+    {
         foreach (var node in root.DescendantNodes())
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -410,7 +488,7 @@ public sealed class SymbolCollector
         SyntaxNode node,
         RelationKind kind,
         SemanticModel model,
-        Dictionary<SyntaxNode, string?> enclosing,
+        EnclosingSymbolResolver enclosing,
         CancellationToken cancellationToken)
     {
         var (bound, provenance) = Bind(model, node, cancellationToken);
@@ -433,7 +511,7 @@ public sealed class SymbolCollector
             return;
         }
 
-        if (EnclosingSymbolName(node, model, enclosing, cancellationToken) is not { } source ||
+        if (enclosing.NameOf(node, cancellationToken) is not { } source ||
             source == SymbolNaming.FullyQualifiedName(target))
         {
             return;
@@ -482,72 +560,4 @@ public sealed class SymbolCollector
         _ => symbol.OriginalDefinition,
     };
 
-    /// <summary>
-    /// The indexed symbol a relation sits inside. Resolved from the innermost enclosing
-    /// declaration and then widened — an accessor yields its property, a local function
-    /// its containing method.
-    /// </summary>
-    private static string? EnclosingSymbolName(
-        SyntaxNode node,
-        SemanticModel model,
-        Dictionary<SyntaxNode, string?> cache,
-        CancellationToken cancellationToken)
-    {
-        var declaration = node.FirstAncestorOrSelf<SyntaxNode>(IsDeclarationBoundary);
-        if (declaration is null)
-        {
-            return null;
-        }
-
-        if (cache.TryGetValue(declaration, out var cached))
-        {
-            return cached;
-        }
-
-        ISymbol? symbol = DeclaredSymbol(declaration, model, cancellationToken);
-        while (symbol is not null && SymbolNaming.MapKind(symbol) is null or IndexedSymbolKind.Namespace)
-        {
-            symbol = symbol switch
-            {
-                // An accessor's ContainingSymbol is the type, skipping past the very
-                // member the relation belongs to; AssociatedSymbol is that member.
-                IMethodSymbol { AssociatedSymbol: { } associated } => associated,
-                _ => symbol.ContainingSymbol,
-            };
-        }
-
-        var name = symbol is null ? null : SymbolNaming.FullyQualifiedName(symbol);
-        cache[declaration] = name;
-        return name;
-    }
-
-    private static bool IsDeclarationBoundary(SyntaxNode node) =>
-        node is MemberDeclarationSyntax
-            or VariableDeclaratorSyntax
-            or AccessorDeclarationSyntax
-            or LocalFunctionStatementSyntax;
-
-    /// <summary>
-    /// A field or event-field declaration carries no symbol of its own. Its declared
-    /// type is shared by every declarator, so the first one stands for the group.
-    /// </summary>
-    private static VariableDeclaratorSyntax? FirstDeclarator(BaseFieldDeclarationSyntax field) =>
-        field.Declaration.Variables.FirstOrDefault();
-
-    private static ISymbol? DeclaredSymbol(SyntaxNode node, SemanticModel model, CancellationToken cancellationToken) =>
-        node switch
-        {
-            // Fields and event fields declare their symbol on the declarator, not the
-            // declaration, and the declarator is the nearer ancestor either way.
-            VariableDeclaratorSyntax declarator => model.GetDeclaredSymbol(declarator, cancellationToken),
-
-            // Reached by references in the declared type, which sits outside the declarator.
-            BaseFieldDeclarationSyntax field when FirstDeclarator(field) is { } declarator =>
-                model.GetDeclaredSymbol(declarator, cancellationToken),
-
-            AccessorDeclarationSyntax accessor => model.GetDeclaredSymbol(accessor, cancellationToken),
-            LocalFunctionStatementSyntax local => model.GetDeclaredSymbol(local, cancellationToken),
-            MemberDeclarationSyntax member => model.GetDeclaredSymbol(member, cancellationToken),
-            _ => null,
-        };
 }

@@ -335,6 +335,10 @@ public class SymbolIndexDatabaseTests : IDisposable
             new PendingRelation("App.Service.Run()", RelationKind.References, "App.Clock", "Clock"),
             new PendingRelation(
                 "App.Service.Service(App.IClock)", RelationKind.ParameterType, "App.IClock", "IClock"),
+
+            // The collector attributes a constructor's parameters to the declaring type as
+            // well, which is the edge the composition graph and this query both read.
+            new PendingRelation("App.Service", RelationKind.Injects, "App.IClock", "IClock"),
             new PendingRelation(
                 "App.Service.Run()", RelationKind.Calls, "App.Missing()", "Missing()", RelationProvenance.Inferred),
         ]);
@@ -415,7 +419,7 @@ public class SymbolIndexDatabaseTests : IDisposable
         var details = database.GetDetails(IdOf(database, "App.Service"));
 
         Assert.NotNull(details);
-        Assert.Equal(["IClock"], details.ConstructorDependencies.Select(link => link.Display));
+        Assert.Equal(["IClock"], details.Injects.Select(link => link.Display));
     }
 
     [Fact]

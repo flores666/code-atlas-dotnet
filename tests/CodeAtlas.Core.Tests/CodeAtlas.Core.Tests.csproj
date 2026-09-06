@@ -16,6 +16,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Puts the ASP.NET Core and DI assemblies on the trusted-platform list, which is
+         what TestProjectFactory hands to its in-memory compilations. Without it the
+         controller and registration tests would compile against types that do not exist. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- EF Core is not in a shared framework, so the persistence tests need the real
+         assemblies to bind DbContext, DbSet and the metadata builders against. The other
+         infrastructure the external-dependency tests recognise is matched by namespace,
+         and is declared in the samples rather than referenced here. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.7" />
     <ProjectReference Include="../../src/CodeAtlas.Core/CodeAtlas.Core.csproj" />
   </ItemGroup>
 

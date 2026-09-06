@@ -175,6 +175,34 @@
                        IsEnabled="{Binding HasWorkspace}"
                        IsChecked="{Binding ActiveSection, Mode=TwoWay,
                                    Converter={StaticResource SectionIs},
+                                   ConverterParameter={x:Static vm:AppSection.Endpoints}}">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+              <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Endpoints}" />
+              <TextBlock Grid.Column="1" Text="Endpoints" Margin="10,0,0,0" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2" Classes="dim" VerticalAlignment="Center"
+                         IsVisible="{Binding HasEndpoints}"
+                         Text="{Binding EndpointCount}" />
+            </Grid>
+          </RadioButton>
+
+          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
+                       IsEnabled="{Binding HasWorkspace}"
+                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
+                                   Converter={StaticResource SectionIs},
+                                   ConverterParameter={x:Static vm:AppSection.Infrastructure}}">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+              <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Infrastructure}" />
+              <TextBlock Grid.Column="1" Text="Infrastructure" Margin="10,0,0,0" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2" Classes="dim" VerticalAlignment="Center"
+                         IsVisible="{Binding HasInfrastructure}"
+                         Text="{Binding InfrastructureCount}" />
+            </Grid>
+          </RadioButton>
+
+          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
+                       IsEnabled="{Binding HasWorkspace}"
+                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
+                                   Converter={StaticResource SectionIs},
                                    ConverterParameter={x:Static vm:AppSection.Graph}}">
             <StackPanel Orientation="Horizontal" Spacing="10">
               <Path Classes="icon" Data="{DynamicResource Icon.Graph}" />
@@ -327,6 +355,12 @@
                 </Border>
                 <Border Classes="card" Padding="14" Margin="0,0,12,12">
                   <StackPanel Spacing="4">
+                    <TextBlock Classes="overline" Text="Endpoints" />
+                    <TextBlock Classes="value" Text="{Binding EndpointCount}" />
+                  </StackPanel>
+                </Border>
+                <Border Classes="card" Padding="14" Margin="0,0,12,12">
+                  <StackPanel Spacing="4">
                     <TextBlock Classes="overline" Text="Diagnostics" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
                       <TextBlock Classes="value" Text="{Binding DiagnosticCount}" />
@@ -475,6 +509,281 @@
             </Border>
           </Grid>
 
+          <!-- Endpoints -->
+          <Grid RowDefinitions="Auto,*" RowSpacing="16"
+                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
+                            ConverterParameter={x:Static vm:AppSection.Endpoints}}">
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16">
+              <StackPanel Grid.Column="0" Spacing="4">
+                <TextBlock Classes="title" Text="Endpoints" TextTrimming="CharacterEllipsis" />
+                <TextBlock Classes="meta" TextTrimming="CharacterEllipsis"
+                           Text="HTTP entry points found in source. Select one to trace its flow." />
+              </StackPanel>
+              <TextBox Grid.Column="1" Theme="{DynamicResource SearchBoxTheme}"
+                       Width="200" VerticalAlignment="Center"
+                       PlaceholderText="Filter routes"
+                       IsVisible="{Binding HasEndpoints}"
+                       Text="{Binding EndpointFilter, Mode=TwoWay}" />
+            </Grid>
+
+            <Border Grid.Row="1" Classes="card" Padding="10" ClipToBounds="True">
+              <Panel>
+                <ListBox ItemsSource="{Binding Endpoints}"
+                         SelectedItem="{Binding SelectedEndpoint, Mode=TwoWay}"
+                         Theme="{DynamicResource ResultListTheme}"
+                         ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                         IsVisible="{Binding HasEndpoints}">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:EndpointViewModel">
+                      <!-- The route is the identity, so it gets the flexible column; the
+                           handler and its origin share the line under it. -->
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                        <Border Grid.Column="0" Classes="verb">
+                          <TextBlock Text="{Binding HttpMethod}" />
+                        </Border>
+                        <StackPanel Grid.Column="1" MinWidth="0">
+                          <TextBlock Text="{Binding Route}" Classes="mono strong"
+                                     TextTrimming="CharacterEllipsis" />
+                          <!-- A Grid, not a horizontal StackPanel: a StackPanel measures its
+                               children unbounded, so nothing inside one ever trims. -->
+                          <!-- The handler takes the Auto column so it is served first; the
+                               origin is the half worth losing when the row is narrow. -->
+                          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                            <TextBlock Grid.Column="0" Text="{Binding Handler}" Classes="dim"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
+                                       TextTrimming="CharacterEllipsis" />
+                          </Grid>
+                        </StackPanel>
+                        <Border Grid.Column="2" Classes="chip"
+                                Classes.warning="{Binding IsAnonymous}"
+                                IsVisible="{Binding HasAuthorization}"
+                                VerticalAlignment="Center">
+                          <TextBlock Text="{Binding Authorization}" />
+                        </Border>
+                        <Grid.ContextMenu>
+                          <ContextMenu>
+                            <MenuItem
+                                Header="Open source"
+                                Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).OpenEndpointSourceCommand}"
+                                CommandParameter="{Binding}" />
+                          </ContextMenu>
+                        </Grid.ContextMenu>
+                      </Grid>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                            IsVisible="{Binding !HasEndpoints}">
+                  <TextBlock Text="No endpoints" Classes="section" HorizontalAlignment="Center" />
+                  <TextBlock Classes="meta" HorizontalAlignment="Center"
+                             TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
+                             Text="Nothing in this workspace declares an attribute-routed controller action or a Minimal API route with a literal template." />
+                </StackPanel>
+              </Panel>
+            </Border>
+          </Grid>
+
+          <!-- Infrastructure -->
+          <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16"
+                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
+                            ConverterParameter={x:Static vm:AppSection.Infrastructure}}">
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16">
+              <StackPanel Grid.Column="0" Spacing="4">
+                <TextBlock Classes="title" Text="Infrastructure" TextTrimming="CharacterEllipsis" />
+                <TextBlock Classes="meta" TextTrimming="CharacterEllipsis"
+                           Text="{Binding InfrastructureSubtitle}" />
+              </StackPanel>
+              <TextBox Grid.Column="1" Theme="{DynamicResource SearchBoxTheme}"
+                       Width="200" VerticalAlignment="Center"
+                       PlaceholderText="Filter"
+                       Text="{Binding InfrastructureFilter, Mode=TwoWay}" />
+            </Grid>
+
+            <!-- The same three cuts the graph filters by, seen as tables. -->
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
+                      Classes.selected="{Binding IsDatabaseView}" Content="Database"
+                      Command="{Binding SetInfrastructureViewCommand}"
+                      CommandParameter="{x:Static vm:InfrastructureView.Database}" />
+              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
+                      Classes.selected="{Binding IsConfigurationView}" Content="Configuration"
+                      Command="{Binding SetInfrastructureViewCommand}"
+                      CommandParameter="{x:Static vm:InfrastructureView.Configuration}" />
+              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
+                      Classes.selected="{Binding IsExternalView}" Content="External services"
+                      Command="{Binding SetInfrastructureViewCommand}"
+                      CommandParameter="{x:Static vm:InfrastructureView.ExternalServices}" />
+            </StackPanel>
+
+            <!-- Database: entities, with the migrations that touch their tables under them. -->
+            <Grid Grid.Row="2" RowDefinitions="*,Auto" RowSpacing="12"
+                  IsVisible="{Binding IsDatabaseView}">
+              <Border Grid.Row="0" Classes="card" Padding="10" ClipToBounds="True">
+                <Panel>
+                  <ListBox ItemsSource="{Binding Entities}"
+                           SelectedItem="{Binding SelectedEntity, Mode=TwoWay}"
+                           Theme="{DynamicResource ResultListTheme}"
+                           ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                           IsVisible="{Binding HasEntities}">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:EntityRowViewModel">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                          <StackPanel Grid.Column="0" MinWidth="0">
+                            <TextBlock Text="{Binding Entity}" Classes="strong"
+                                       TextTrimming="CharacterEllipsis" />
+                            <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="6">
+                              <TextBlock Grid.Column="0" Text="{Binding Context}" Classes="dim"
+                                         TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Column="1" Text="{Binding Configuration}" Classes="dimmer"
+                                         IsVisible="{Binding HasConfiguration}"
+                                         TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Column="2" Text="{Binding Origin}" Classes="dimmer"
+                                         TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                          </StackPanel>
+                          <Border Grid.Column="1" Classes="chip" VerticalAlignment="Center"
+                                  ToolTip.Tip="The table this entity is mapped to">
+                            <TextBlock Text="{Binding Table}" Classes="mono" />
+                          </Border>
+                        </Grid>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+
+                  <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                              IsVisible="{Binding !HasEntities}">
+                    <TextBlock Text="No entities" Classes="section" HorizontalAlignment="Center" />
+                    <TextBlock Classes="meta" HorizontalAlignment="Center"
+                               TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
+                               Text="Nothing in this workspace declares a DbContext, a DbSet or an entity type configuration." />
+                  </StackPanel>
+                </Panel>
+              </Border>
+
+              <Border Grid.Row="1" Classes="card" Padding="10" MaxHeight="220"
+                      ClipToBounds="True" IsVisible="{Binding HasMigrations}">
+                <StackPanel Spacing="8">
+                  <TextBlock Classes="overline" Text="Migrations" />
+                  <ListBox ItemsSource="{Binding Migrations}"
+                           SelectedItem="{Binding SelectedMigration, Mode=TwoWay}"
+                           Theme="{DynamicResource ResultListTheme}"
+                           ItemContainerTheme="{DynamicResource ResultRowTheme}">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:MigrationRowViewModel">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                          <StackPanel Grid.Column="0" MinWidth="0">
+                            <TextBlock Text="{Binding Name}" Classes="mono strong"
+                                       TextTrimming="CharacterEllipsis" />
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                              <TextBlock Grid.Column="0" Text="{Binding Context}" Classes="dim"
+                                         TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
+                                         TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                          </StackPanel>
+                          <TextBlock Grid.Column="1" Text="{Binding Tables}" Classes="caption"
+                                     VerticalAlignment="Center" MaxWidth="280"
+                                     TextTrimming="CharacterEllipsis"
+                                     ToolTip.Tip="Tables this migration names" />
+                        </Grid>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                </StackPanel>
+              </Border>
+            </Grid>
+
+            <!-- Configuration -->
+            <Border Grid.Row="2" Classes="card" Padding="10" ClipToBounds="True"
+                    IsVisible="{Binding IsConfigurationView}">
+              <Panel>
+                <ListBox ItemsSource="{Binding ConfigurationKeys}"
+                         SelectedItem="{Binding SelectedConfiguration, Mode=TwoWay}"
+                         Theme="{DynamicResource ResultListTheme}"
+                         ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                         IsVisible="{Binding HasConfigurationKeys}">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:ConfigurationRowViewModel">
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                        <Border Grid.Column="0" Classes="verb">
+                          <TextBlock Text="{Binding Access}" />
+                        </Border>
+                        <StackPanel Grid.Column="1" MinWidth="0">
+                          <TextBlock Text="{Binding Key}" Classes="mono strong"
+                                     TextTrimming="CharacterEllipsis" />
+                          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                            <TextBlock Grid.Column="0" Text="{Binding Consumer}" Classes="dim"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
+                                       TextTrimming="CharacterEllipsis" />
+                          </Grid>
+                        </StackPanel>
+                        <Border Grid.Column="2" Classes="chip" VerticalAlignment="Center"
+                                IsVisible="{Binding HasOptions}">
+                          <TextBlock Text="{Binding Options}" />
+                        </Border>
+                      </Grid>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                            IsVisible="{Binding !HasConfigurationKeys}">
+                  <TextBlock Text="No configuration" Classes="section" HorizontalAlignment="Center" />
+                  <TextBlock Classes="meta" HorizontalAlignment="Center"
+                             TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
+                             Text="Nothing in this workspace reads a configuration key, section or options type by a name written in source." />
+                </StackPanel>
+              </Panel>
+            </Border>
+
+            <!-- External services -->
+            <Border Grid.Row="2" Classes="card" Padding="10" ClipToBounds="True"
+                    IsVisible="{Binding IsExternalView}">
+              <Panel>
+                <ListBox ItemsSource="{Binding ExternalServices}"
+                         SelectedItem="{Binding SelectedExternalService, Mode=TwoWay}"
+                         Theme="{DynamicResource ResultListTheme}"
+                         ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                         IsVisible="{Binding HasExternalServices}">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:ExternalRowViewModel">
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                        <Border Grid.Column="0" Classes="verb">
+                          <TextBlock Text="{Binding TechnologyLabel}" />
+                        </Border>
+                        <StackPanel Grid.Column="1" MinWidth="0">
+                          <TextBlock Text="{Binding Consumer}" Classes="strong"
+                                     TextTrimming="CharacterEllipsis" />
+                          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                            <TextBlock Grid.Column="0" Text="{Binding Client}" Classes="dim"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
+                                       TextTrimming="CharacterEllipsis" />
+                          </Grid>
+                        </StackPanel>
+                        <Border Grid.Column="2" Classes="chip" VerticalAlignment="Center"
+                                ToolTip.Tip="How this boundary was found">
+                          <TextBlock Text="{Binding Binding}" />
+                        </Border>
+                      </Grid>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                            IsVisible="{Binding !HasExternalServices}">
+                  <TextBlock Text="No external services" Classes="section" HorizontalAlignment="Center" />
+                  <TextBlock Classes="meta" HorizontalAlignment="Center"
+                             TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
+                             Text="Nothing in this workspace reaches an HTTP, gRPC, cache, broker, storage or file-system client CodeAtlas recognises." />
+                </StackPanel>
+              </Panel>
+            </Border>
+          </Grid>
+
           <!-- Graph -->
           <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16"
                 IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
@@ -518,9 +827,25 @@
                               IsChecked="{Binding ShowInheritance, Mode=TwoWay}" Content="Inheritance" />
                 <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
                               IsChecked="{Binding ShowImplementations, Mode=TwoWay}" Content="Implementations" />
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,20,2"
+                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
                               IsChecked="{Binding ShowTypeDependencies, Mode=TwoWay}"
                               Content="Type dependencies" />
+                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
+                              IsChecked="{Binding ShowComposition, Mode=TwoWay}"
+                              Content="Composition"
+                              ToolTip.Tip="What a type injects, and what the container resolves it to" />
+                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
+                              IsChecked="{Binding ShowDatabase, Mode=TwoWay}"
+                              Content="Database"
+                              ToolTip.Tip="Entities, the contexts that declare them, and what reads and writes them" />
+                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
+                              IsChecked="{Binding ShowConfiguration, Mode=TwoWay}"
+                              Content="Configuration"
+                              ToolTip.Tip="Options types and the components that read them" />
+                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,20,2"
+                              IsChecked="{Binding ShowExternalServices, Mode=TwoWay}"
+                              Content="External services"
+                              ToolTip.Tip="Where the application reaches infrastructure it does not own" />
 
                 <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2" VerticalAlignment="Center">
                   <Border Classes="chip warning" IsVisible="{Binding IsTruncated}"
@@ -587,7 +912,14 @@
                               <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                 <TextBlock Text="{Binding Display}" FontWeight="Medium"
                                            TextTrimming="CharacterEllipsis" />
+                                <!-- A node standing on infrastructure says so instead of
+                                     naming its container: the table or the technology is
+                                     what makes the flow readable without opening it. -->
                                 <TextBlock Text="{Binding Container}" Classes="dim"
+                                           IsVisible="{Binding !HasInfrastructure}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Infrastructure}" Classes="dim strong"
+                                           IsVisible="{Binding HasInfrastructure}"
                                            TextTrimming="CharacterEllipsis" />
                               </StackPanel>
                               <Button Grid.Column="2" Theme="{DynamicResource IconButtonTheme}"
@@ -764,6 +1096,143 @@
                     <TextBlock Grid.Row="2" Grid.Column="0" Text="Accessibility" Classes="meta" />
                     <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Accessibility}" />
                   </Grid>
+                </StackPanel>
+
+                <StackPanel Spacing="8" IsVisible="{Binding HasRegistrations}">
+                  <TextBlock Classes="overline" Text="Container" />
+                  <ItemsControl ItemsSource="{Binding Registrations}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:RegistrationViewModel">
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
+                          <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top">
+                            <TextBlock Text="{Binding Lifetime}" />
+                          </Border>
+                          <StackPanel Grid.Column="1">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                              <TextBlock Text="{Binding Implementation}" FontWeight="Medium"
+                                         TextTrimming="CharacterEllipsis" />
+                              <Border Classes="chip warning" IsVisible="{Binding !IsExact}"
+                                      ToolTip.Tip="Read from a factory body, which CodeAtlas does not execute.">
+                                <TextBlock Text="inferred" />
+                              </Border>
+                            </StackPanel>
+                            <TextBlock Text="{Binding Service}" Classes="caption"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Origin}" Classes="caption"
+                                       TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+
+                <StackPanel Spacing="8" IsVisible="{Binding HasEntityMappings}">
+                  <TextBlock Classes="overline" Text="Mapping" />
+                  <ItemsControl ItemsSource="{Binding EntityMappings}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:EntityRowViewModel">
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
+                          <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top">
+                            <TextBlock Text="{Binding Table}" Classes="mono" />
+                          </Border>
+                          <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding Entity}" FontWeight="Medium"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Context}" Classes="caption"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Configuration}" Classes="caption"
+                                       IsVisible="{Binding HasConfiguration}"
+                                       TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+
+                <StackPanel Spacing="8" IsVisible="{Binding HasMigrations}">
+                  <TextBlock Classes="overline" Text="Migrations" />
+                  <ItemsControl ItemsSource="{Binding Migrations}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:MigrationRowViewModel">
+                        <StackPanel Margin="0,3">
+                          <TextBlock Text="{Binding Name}" Classes="mono"
+                                     TextTrimming="CharacterEllipsis" />
+                          <TextBlock Text="{Binding Tables}" Classes="caption"
+                                     TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+
+                <StackPanel Spacing="8" IsVisible="{Binding HasConfiguration}">
+                  <TextBlock Classes="overline" Text="Configuration" />
+                  <ItemsControl ItemsSource="{Binding Configuration}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:ConfigurationRowViewModel">
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
+                          <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top">
+                            <TextBlock Text="{Binding Access}" />
+                          </Border>
+                          <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding Key}" Classes="mono"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Consumer}" Classes="caption"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Origin}" Classes="caption"
+                                       TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+
+                <StackPanel Spacing="8" IsVisible="{Binding HasExternalDependencies}">
+                  <TextBlock Classes="overline" Text="External services" />
+                  <ItemsControl ItemsSource="{Binding ExternalDependencies}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:ExternalRowViewModel">
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
+                          <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top">
+                            <TextBlock Text="{Binding TechnologyLabel}" />
+                          </Border>
+                          <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding Resource}" FontWeight="Medium"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Client}" Classes="caption"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Binding}" Classes="caption"
+                                       TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+
+                <!-- The doors that lead here, found by walking composition backwards. -->
+                <StackPanel Spacing="8" IsVisible="{Binding HasRelatedEndpoints}">
+                  <TextBlock Classes="overline" Text="Reached from" />
+                  <ItemsControl ItemsSource="{Binding RelatedEndpoints}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:EndpointViewModel">
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
+                          <Border Grid.Column="0" Classes="verb" VerticalAlignment="Top">
+                            <TextBlock Text="{Binding HttpMethod}" />
+                          </Border>
+                          <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding Route}" Classes="mono"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Handler}" Classes="caption"
+                                       TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
                 </StackPanel>
 
                 <StackPanel Spacing="8" IsVisible="{Binding HasAttributes}">
