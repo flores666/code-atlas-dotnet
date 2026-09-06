@@ -26,6 +26,7 @@ public sealed class IndexWriteSession : IDisposable
     private readonly SqliteCommand _insertDiagnostic;
     private readonly SqliteCommand _insertRegistration;
     private readonly SqliteCommand _insertEndpoint;
+    private readonly SqliteCommand _insertEndpointDependency;
     private readonly SqliteCommand _insertEntity;
     private readonly SqliteCommand _insertMigration;
     private readonly SqliteCommand _insertConfiguration;
@@ -40,6 +41,7 @@ public sealed class IndexWriteSession : IDisposable
         Execute("""
             DELETE FROM relations;
             DELETE FROM service_registrations;
+            DELETE FROM endpoint_dependencies;
             DELETE FROM endpoints;
             DELETE FROM data_entities;
             DELETE FROM data_migrations;
@@ -114,6 +116,13 @@ public sealed class IndexWriteSession : IDisposable
             "@method", "@route", "@handler", "@handlerFqn", "@declaring", "@kind",
             "@project", "@file", "@line", "@auth", "@anonymous",
             "@policies", "@roles", "@provenance");
+
+        _insertEndpointDependency = Prepare(
+            """
+            INSERT INTO endpoint_dependencies (endpoint_id, target_fqn, target_display)
+            VALUES (@endpoint, @fqn, @display)
+            """,
+            "@endpoint", "@fqn", "@display");
 
         _insertEntity = Prepare(
             """
@@ -265,6 +274,20 @@ public sealed class IndexWriteSession : IDisposable
             Set(_insertEndpoint, "@roles", Join(endpoint.Roles));
             Set(_insertEndpoint, "@provenance", endpoint.Provenance.ToString());
             _insertEndpoint.ExecuteNonQuery();
+
+            if (endpoint.Dependencies.Count == 0)
+            {
+                continue;
+            }
+
+            var endpointId = LastRowId();
+            foreach (var dependency in endpoint.Dependencies)
+            {
+                Set(_insertEndpointDependency, "@endpoint", endpointId);
+                Set(_insertEndpointDependency, "@fqn", dependency.FullyQualifiedName);
+                Set(_insertEndpointDependency, "@display", dependency.Display);
+                _insertEndpointDependency.ExecuteNonQuery();
+            }
         }
     }
 
@@ -392,6 +415,9 @@ public sealed class IndexWriteSession : IDisposable
                 handler_symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = handler_fqn),
                 declaring_id      = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = declaring_fqn);
 
+            UPDATE endpoint_dependencies SET
+                symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = target_fqn);
+
             UPDATE data_entities SET
                 entity_symbol_id  = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = entity_fqn),
                 context_symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = context_fqn),
@@ -503,6 +529,7 @@ public sealed class IndexWriteSession : IDisposable
         _insertDiagnostic.Dispose();
         _insertRegistration.Dispose();
         _insertEndpoint.Dispose();
+        _insertEndpointDependency.Dispose();
         _insertEntity.Dispose();
         _insertMigration.Dispose();
         _insertConfiguration.Dispose();

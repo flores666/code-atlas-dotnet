@@ -40,6 +40,27 @@ public sealed record HttpEndpoint
 
     public long? DeclaringTypeSymbolId { get; init; }
 
+    /// <summary>
+    /// What an inline handler reaches directly: the services it is handed, then the
+    /// methods it calls, in that order.
+    /// </summary>
+    /// <remarks>
+    /// A lambda declares nothing, so unlike a controller action it has no symbol whose
+    /// stored relations describe it. These are that description, and they are the same
+    /// two things a controller contributes — what it is given, and what it does with it —
+    /// read off the lambda instead of off a declaration. Empty for every other endpoint,
+    /// which carries the same facts on <see cref="HandlerSymbolId"/> and
+    /// <see cref="DeclaringTypeSymbolId"/>.
+    /// </remarks>
+    public IReadOnlyList<SymbolLink> Dependencies { get; init; } = [];
+
+    /// <summary>The indexed symbols this endpoint's flow can be walked from.</summary>
+    public IReadOnlyList<long> FlowSeeds =>
+    [
+        .. new[] { HandlerSymbolId, DeclaringTypeSymbolId }.OfType<long>(),
+        .. Dependencies.Select(dependency => dependency.SymbolId).OfType<long>(),
+    ];
+
     public required EndpointKind Kind { get; init; }
 
     public string? ProjectName { get; init; }

@@ -53,7 +53,7 @@ services** — alongside the existing ones, and a node standing on infrastructur
 with the table it maps to or the technology it talks to.
 
 ```
-dotnet test              # 124 tests, including a real end-to-end indexing run
+dotnet test              # 134 tests, including a real end-to-end indexing run
 ```
 
 Requires the .NET 10 SDK at run time: Roslyn loads projects through the SDK's MSBuild.

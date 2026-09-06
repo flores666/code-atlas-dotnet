@@ -784,25 +784,43 @@ public sealed class SymbolIndexDatabase : IDisposable
     }
 
     /// <summary>
-    /// The services an endpoint's handler can reach directly: what its declaring type is
-    /// constructed with. For a Minimal API lambda there is no declaring type and so no
-    /// dependencies to report.
+    /// What an endpoint's handler reaches directly: for a controller action, the services
+    /// its declaring type is constructed with; for a Minimal API lambda, the services it
+    /// is handed and the methods it calls, which is where its flow has to start because it
+    /// has no declaration of its own.
     /// </summary>
     public IReadOnlyList<SymbolLink> GetEndpointDependencies(long endpointId)
     {
         lock (_gate)
         {
             using var command = _connection.CreateCommand();
+
+            // Kept in collection order rather than sorted: the first is the one an inline
+            // endpoint's graph is rooted at, and the collector emits it first for that reason.
             command.CommandText = """
+                SELECT d.symbol_id, d.target_fqn, d.target_display, 'Exact'
+                FROM endpoint_dependencies d
+                WHERE d.endpoint_id = @id
+                ORDER BY d.id
+                """;
+            command.Parameters.AddWithValue("@id", endpointId);
+
+            if (ReadLinks(command) is { Count: > 0 } inline)
+            {
+                return inline;
+            }
+
+            using var injected = _connection.CreateCommand();
+            injected.CommandText = """
                 SELECT DISTINCT r.target_symbol_id, r.target_fqn, r.target_display, r.provenance
                 FROM endpoints e
                 JOIN relations r ON r.source_symbol_id = e.declaring_id AND r.kind = 'Injects'
                 WHERE e.id = @id
                 ORDER BY r.target_display COLLATE NOCASE, r.target_fqn
                 """;
-            command.Parameters.AddWithValue("@id", endpointId);
+            injected.Parameters.AddWithValue("@id", endpointId);
 
-            return ReadLinks(command);
+            return ReadLinks(injected);
         }
     }
 
@@ -860,6 +878,8 @@ public sealed class SymbolIndexDatabase : IDisposable
             {SelectEndpoint}
             WHERE e.declaring_id IN (SELECT id FROM reach)
                OR e.handler_symbol_id IN (SELECT id FROM reach)
+               OR e.id IN (SELECT d.endpoint_id FROM endpoint_dependencies d
+                           WHERE d.symbol_id IN (SELECT id FROM reach))
             ORDER BY e.route COLLATE NOCASE, e.http_method, e.id
             LIMIT @limit
             """;
@@ -1085,7 +1105,7 @@ public sealed class SymbolIndexDatabase : IDisposable
         LEFT JOIN projects p ON p.id = e.project_id
         """;
 
-    private static List<HttpEndpoint> ReadEndpoints(SqliteCommand command)
+    private List<HttpEndpoint> ReadEndpoints(SqliteCommand command)
     {
         using var reader = command.ExecuteReader();
         var results = new List<HttpEndpoint>();
@@ -1114,8 +1134,72 @@ public sealed class SymbolIndexDatabase : IDisposable
             });
         }
 
-        return results;
+        reader.Close();
+
+        return WithDependencies(results);
     }
+
+    /// <summary>
+    /// Attaches what each inline handler reaches, in one query rather than one per row.
+    /// Only a Minimal API lambda has any, so most reads add nothing but the lookup.
+    /// </summary>
+    private List<HttpEndpoint> WithDependencies(List<HttpEndpoint> endpoints)
+    {
+        if (endpoints.Count == 0)
+        {
+            return endpoints;
+        }
+
+        using var command = _connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT d.endpoint_id, d.symbol_id, d.target_fqn, d.target_display
+            FROM endpoint_dependencies d
+            WHERE d.endpoint_id IN ({Placeholders(endpoints.Count)})
+            ORDER BY d.endpoint_id, d.id
+            """;
+
+        for (var i = 0; i < endpoints.Count; i++)
+        {
+            command.Parameters.AddWithValue($"@p{i}", endpoints[i].Id);
+        }
+
+        var byEndpoint = new Dictionary<long, List<SymbolLink>>();
+
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                var id = reader.GetInt64(0);
+                if (!byEndpoint.TryGetValue(id, out var links))
+                {
+                    byEndpoint[id] = links = [];
+                }
+
+                links.Add(new SymbolLink(
+                    reader.IsDBNull(1) ? null : reader.GetInt64(1),
+                    reader.GetString(2),
+                    reader.GetString(3)));
+            }
+        }
+
+        if (byEndpoint.Count == 0)
+        {
+            return endpoints;
+        }
+
+        for (var i = 0; i < endpoints.Count; i++)
+        {
+            if (byEndpoint.TryGetValue(endpoints[i].Id, out var links))
+            {
+                endpoints[i] = endpoints[i] with { Dependencies = links };
+            }
+        }
+
+        return endpoints;
+    }
+
+    private static string Placeholders(int count) =>
+        string.Join(", ", Enumerable.Range(0, count).Select(i => $"@p{i}"));
 
     private const string SelectEntity = """
         SELECT e.id, e.entity_fqn, e.entity_display, e.entity_symbol_id,

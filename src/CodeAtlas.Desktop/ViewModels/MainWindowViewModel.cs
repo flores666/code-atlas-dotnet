@@ -167,42 +167,68 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         get => _selectedEndpoint;
         set
         {
-            if (!SetProperty(ref _selectedEndpoint, value) || value is null)
+            if (SetProperty(ref _selectedEndpoint, value) && value is not null)
             {
-                return;
+                _ = ShowEndpointAsync(value);
             }
-
-            if (value.Endpoint.HandlerSymbolId is not { } handlerId)
-            {
-                StatusMessage = $"{value.HttpMethod} {value.Route} is handled inline and has no declaration to explore.";
-                return;
-            }
-
-            _ = ShowEndpointAsync(value, handlerId);
         }
     }
 
     public RelayCommand OpenEndpointSourceCommand { get; }
 
-    private async Task ShowEndpointAsync(EndpointViewModel endpoint, long handlerId)
+    /// <summary>
+    /// Opens the graph on an endpoint.
+    /// </summary>
+    /// <remarks>
+    /// A controller action is its own root and its declaring type carries the injected
+    /// services. An inline Minimal API handler declares nothing, so the flow is rooted at
+    /// the first thing the lambda reaches and seeded with the rest. An endpoint that
+    /// reaches nothing indexed still opens the section, on a notice saying why: a
+    /// selection that produced nothing at all reads as a broken click.
+    /// </remarks>
+    private async Task ShowEndpointAsync(EndpointViewModel endpoint)
     {
         if (_database is not { } database)
         {
             return;
         }
 
-        var details = await Task.Run(() => database.GetDetails(handlerId));
-        Details = details is null ? null : new SymbolDetailsViewModel(details, NavigateCommand);
+        var target = endpoint.Endpoint;
 
-        if (details is not null)
-        {
-            Graph.FocusEndpoint(
-                details.Symbol,
-                endpoint.Endpoint.DeclaringTypeSymbolId is { } declaringId ? [declaringId] : [],
-                $"{endpoint.HttpMethod} {endpoint.Route}");
-        }
+        var (details, seeds) = await Task.Run<(SymbolDetails?, IReadOnlyList<long>)>(() =>
+            target.HandlerSymbolId is { } handlerId
+                ? (database.GetDetails(handlerId),
+                   target.DeclaringTypeSymbolId is { } declaringId ? [declaringId] : [])
+                : InlineFlow(database, target));
+
+        Details = details is null ? null : new SymbolDetailsViewModel(details, NavigateCommand);
+        Graph.FocusEndpoint(target, details?.Symbol, seeds);
+
+        StatusMessage = details is null
+            ? $"{endpoint.HttpMethod} {endpoint.Route} reaches nothing indexed in this workspace."
+            : $"{endpoint.HttpMethod} {endpoint.Route} → {details.Symbol.Display}";
 
         ActiveSection = AppSection.Graph;
+    }
+
+    /// <summary>
+    /// The flow behind an inline handler: rooted at the first symbol it reaches — the
+    /// collector puts the services it is handed before the methods it calls — and seeded
+    /// with the others, so one click maps the whole lambda rather than one arbitrary hop.
+    /// </summary>
+    private static (SymbolDetails? Details, IReadOnlyList<long> Seeds) InlineFlow(
+        SymbolIndexDatabase database,
+        HttpEndpoint endpoint)
+    {
+        var reached = database.GetEndpointDependencies(endpoint.Id)
+            .Select(dependency => dependency.SymbolId)
+            .OfType<long>()
+            .Distinct()
+            .ToList();
+
+        return reached is [var first, .. var rest]
+            ? (database.GetDetails(first), rest)
+            : (null, []);
     }
 
     private void OpenEndpointSource(EndpointViewModel? endpoint)

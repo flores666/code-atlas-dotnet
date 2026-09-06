@@ -58,19 +58,13 @@ public sealed class GraphViewModel : ObservableObject
     ];
 
     /// <summary>
-    /// The edges a flow is made of, whichever end it is read from: what calls what, how it
-    /// is wired, and where it lands. References and signature types answer a different
-    /// question and would bury this one.
+    /// Shown in place of the graph when an endpoint has no handler to walk from, so the
+    /// section says why it is empty rather than looking like nothing happened.
     /// </summary>
-    private static readonly RelationGroupKind[] FlowGroups =
-    [
-        RelationGroupKind.Calls,
-        RelationGroupKind.Composition,
-        RelationGroupKind.Implementations,
-        RelationGroupKind.Database,
-        RelationGroupKind.Configuration,
-        RelationGroupKind.ExternalServices,
-    ];
+    private const string NoHandlerNotice =
+        "The endpoint was detected, but nothing it reaches is indexed in this workspace. " +
+        "An inline handler that only calls framework code, or one whose services live " +
+        "outside the solution, has no flow of its own to map.";
 
     private readonly HashSet<long> _expanded = [];
     private readonly GraphCommands _commands;
@@ -79,6 +73,7 @@ public sealed class GraphViewModel : ObservableObject
     private IndexedSymbol? _root;
     private IReadOnlyList<long> _seeds = [];
     private string? _rootCaption;
+    private string? _endpointNotice;
     private GraphNodeViewModel? _selectedNode;
     private int _generation;
 
@@ -129,9 +124,20 @@ public sealed class GraphViewModel : ObservableObject
 
     public string RootTitle => _rootCaption ?? _root?.Display ?? "No symbol selected";
 
-    public string RootSubtitle => _root is { } root
-        ? $"{SymbolGlyph.Keyword(root.Kind)} · {root.FullyQualifiedName}"
-        : "Select a symbol to map its neighbourhood.";
+    public string RootSubtitle => (_root, _endpointNotice) switch
+    {
+        ({ } root, _) => $"{SymbolGlyph.Keyword(root.Kind)} · {root.FullyQualifiedName}",
+        (_, not null) => "No navigable handler",
+        _ => "Select a symbol to map its neighbourhood.",
+    };
+
+    /// <summary>
+    /// Why the endpoint the reader picked has no flow, or <c>null</c> when nothing is
+    /// wrong. Shown where the graph would be, because a status-bar line is missable.
+    /// </summary>
+    public string? EndpointNotice => _endpointNotice;
+
+    public bool HasEndpointNotice => _endpointNotice is not null;
 
     public bool HasGraph => Nodes.Count > 0;
 
@@ -294,12 +300,11 @@ public sealed class GraphViewModel : ObservableObject
         _root = root;
         _seeds = seeds ?? [];
         _rootCaption = caption;
+        _endpointNotice = null;
         _expanded.Clear();
         _isStale = true;
 
-        OnPropertyChanged(nameof(HasRoot));
-        OnPropertyChanged(nameof(RootTitle));
-        OnPropertyChanged(nameof(RootSubtitle));
+        RaiseHeading();
 
         if (root is null)
         {
@@ -565,26 +570,53 @@ public sealed class GraphViewModel : ObservableObject
 
     /// <summary>
     /// Frames the graph on one endpoint's flow: the action and the type that holds its
-    /// dependencies, deep enough to reach what an implementation itself depends on.
+    /// dependencies, deep enough to reach the implementations the container resolves.
     /// </summary>
-    public void FocusEndpoint(IndexedSymbol handler, IReadOnlyList<long> seeds, string caption) =>
-        Focus(handler, seeds, caption, EndpointFlowDepth, FlowGroups);
+    /// <param name="root">
+    /// Where the walk starts: the indexed action for a controller endpoint, or — for an
+    /// inline Minimal API handler, which declares nothing — the first thing the lambda
+    /// reaches. Null only when the endpoint resolved to no indexed symbol at all, and the
+    /// section then says why rather than looking like a click that did not register.
+    /// </param>
+    /// <param name="seeds">Walked from alongside the root; see <see cref="GraphOptions.Seeds"/>.</param>
+    public void FocusEndpoint(HttpEndpoint endpoint, IndexedSymbol? root, IReadOnlyList<long>? seeds = null)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        var caption = $"{endpoint.HttpMethod} {endpoint.Route}";
+
+        if (root is null)
+        {
+            SetRoot(null);
+            _rootCaption = caption;
+            _endpointNotice = NoHandlerNotice;
+            RaiseHeading();
+            return;
+        }
+
+        Focus(
+            root,
+            [.. (seeds ?? []).Where(id => id != root.Id)],
+            caption,
+            GraphOptions.EndpointFlowDepth,
+            GraphOptions.FlowGroups);
+    }
 
     /// <summary>
     /// Frames the graph on one resource — an entity, an options type, a boundary — showing
     /// what reaches it rather than what it is made of.
     /// </summary>
     public void FocusResource(IndexedSymbol resource, string caption) =>
-        Focus(resource, [], caption, ResourceFlowDepth, FlowGroups);
+        Focus(resource, [], caption, GraphOptions.ResourceFlowDepth, GraphOptions.FlowGroups);
 
-    /// <summary>The depth an endpoint's flow needs to reach an implementation's own dependencies.</summary>
-    public const int EndpointFlowDepth = 3;
-
-    /// <summary>
-    /// A resource sits at the far end of the same flow, so reaching back up to the
-    /// endpoint takes the hops the other direction spent getting down to it.
-    /// </summary>
-    public const int ResourceFlowDepth = 4;
+    private void RaiseHeading()
+    {
+        OnPropertyChanged(nameof(HasRoot));
+        OnPropertyChanged(nameof(RootTitle));
+        OnPropertyChanged(nameof(RootSubtitle));
+        OnPropertyChanged(nameof(EndpointNotice));
+        OnPropertyChanged(nameof(HasEndpointNotice));
+    }
 
     /// <summary>
     /// Reframes the graph on one question, narrowed to the edges that answer it.

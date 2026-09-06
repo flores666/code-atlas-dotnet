@@ -958,10 +958,27 @@
 
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
                             IsVisible="{Binding !Graph.HasGraph}">
-                  <TextBlock Text="No symbol selected" Classes="section" HorizontalAlignment="Center" />
-                  <TextBlock Classes="meta" HorizontalAlignment="Center"
-                             TextAlignment="Center" TextWrapping="Wrap" MaxWidth="380"
-                             Text="Pick a method or type in the explorer or in search results, and its callers, callees, implementations and type dependencies are mapped here." />
+                  <!-- An endpoint that cannot be mapped says so here, where the graph would
+                       have been, rather than only in the status bar. -->
+                  <StackPanel Spacing="8" IsVisible="{Binding Graph.HasEndpointNotice}">
+                    <TextBlock Text="Endpoint flow unavailable" Classes="section"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Classes="meta" HorizontalAlignment="Center"
+                               TextAlignment="Center" TextWrapping="Wrap" MaxWidth="380"
+                               Text="{Binding Graph.EndpointNotice}" />
+                    <Button Theme="{DynamicResource SecondaryButtonTheme}"
+                            HorizontalAlignment="Center" Content="Open source"
+                            IsVisible="{Binding SelectedEndpoint.HasSource, FallbackValue=False}"
+                            Command="{Binding OpenEndpointSourceCommand}"
+                            CommandParameter="{Binding SelectedEndpoint}" />
+                  </StackPanel>
+
+                  <StackPanel Spacing="8" IsVisible="{Binding !Graph.HasEndpointNotice}">
+                    <TextBlock Text="No symbol selected" Classes="section" HorizontalAlignment="Center" />
+                    <TextBlock Classes="meta" HorizontalAlignment="Center"
+                               TextAlignment="Center" TextWrapping="Wrap" MaxWidth="380"
+                               Text="Pick a method or type in the explorer or in search results, and its callers, callees, implementations and type dependencies are mapped here." />
+                  </StackPanel>
                 </StackPanel>
 
                 <ProgressBar Width="160" IsIndeterminate="True"

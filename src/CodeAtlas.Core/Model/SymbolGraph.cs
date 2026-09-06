@@ -51,6 +51,45 @@ public sealed record GraphOptions
 
     public const int MaxDepth = 6;
 
+    /// <summary>
+    /// The depth an endpoint's flow needs to land on an implementation.
+    /// </summary>
+    /// <remarks>
+    /// A composition hop costs two: <see cref="RelationKind.Injects"/> reaches the
+    /// interface a type depends on, and <see cref="RelationKind.Resolves"/> crosses from
+    /// there to what the container was told satisfies it. An odd depth therefore stops on
+    /// an interface — the hop before the answer — so the flow behind a controller with a
+    /// service and a repository needs four to reach the repository implementation rather
+    /// than only its interface.
+    /// </remarks>
+    public const int EndpointFlowDepth = 4;
+
+    /// <summary>
+    /// A resource sits at the far end of the same flow, so reaching back up to the
+    /// endpoint takes the hops the other direction spent getting down to it, plus the one
+    /// that crossed into the resource itself.
+    /// </summary>
+    public const int ResourceFlowDepth = EndpointFlowDepth + 1;
+
+    /// <summary>
+    /// The edges a flow is made of, whichever end it is read from: what calls what, how it
+    /// is wired, and where it lands. References and signature types answer a different
+    /// question and would bury this one.
+    /// </summary>
+    public static readonly IReadOnlyList<RelationGroupKind> FlowGroups =
+    [
+        RelationGroupKind.Calls,
+        RelationGroupKind.Composition,
+        RelationGroupKind.Implementations,
+        RelationGroupKind.Database,
+        RelationGroupKind.Configuration,
+        RelationGroupKind.ExternalServices,
+    ];
+
+    /// <summary><see cref="FlowGroups"/> flattened, for a walk built without filter state.</summary>
+    public static readonly IReadOnlySet<RelationKind> FlowKinds =
+        FlowGroups.SelectMany(RelationKinds.InGroup).ToHashSet();
+
     /// <summary>Hops to walk from the root. Clamped to <see cref="MaxDepth"/>.</summary>
     public int Depth { get; init; } = 1;
 

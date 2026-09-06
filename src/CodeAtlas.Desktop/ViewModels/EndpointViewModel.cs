@@ -25,6 +25,9 @@ public sealed class EndpointViewModel(HttpEndpoint endpoint)
     /// <summary>True for the anonymous case, which is the one worth reading as an exception.</summary>
     public bool IsAnonymous { get; } = endpoint.AllowsAnonymous;
 
-    /// <summary>False for a handler with no declaration to open, such as an inline lambda.</summary>
-    public bool CanExplore => endpoint.HandlerSymbolId is not null;
+    /// <summary>
+    /// True when the registration was located in source. An endpoint whose flow cannot be
+    /// mapped is still worth opening, so this is what keeps that door open.
+    /// </summary>
+    public bool HasSource => endpoint.FilePath is { Length: > 0 };
 }
