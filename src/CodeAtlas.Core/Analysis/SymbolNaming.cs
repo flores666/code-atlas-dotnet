@@ -43,6 +43,18 @@ public static class SymbolNaming
     public static string Display(ISymbol symbol) =>
         symbol.ToDisplayString(DisplayFormat);
 
+    /// <summary>
+    /// The declaration a use of a symbol refers to: the open generic definition, and for
+    /// an extension method called as an instance method the method as it was declared.
+    /// Identity is stored for declarations, so every edge into one has to name it the
+    /// same way or it will not resolve.
+    /// </summary>
+    public static ISymbol Definition(ISymbol symbol) => symbol switch
+    {
+        IMethodSymbol { ReducedFrom: { } reduced } => reduced.OriginalDefinition,
+        _ => symbol.OriginalDefinition,
+    };
+
     /// <summary>Containing namespace, or <c>null</c> at global scope.</summary>
     public static string? NamespaceOf(ISymbol symbol) =>
         symbol.ContainingNamespace is { IsGlobalNamespace: false } ns

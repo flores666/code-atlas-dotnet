@@ -27,6 +27,12 @@ public sealed class EndpointCollector
     /// <summary>How far the walk chases a route group through locals before giving up.</summary>
     private const int MaxPrefixDepth = 8;
 
+    /// <summary>
+    /// How many symbols one inline handler contributes. A handler long enough to reach
+    /// this is doing too much to read as a flow anyway, and the graph has its own caps.
+    /// </summary>
+    private const int MaxHandlerDependencies = 24;
+
     private static readonly string[] ControllerBaseTypes =
         [$"{Mvc}.ControllerBase", $"{Mvc}.Controller"];
 
@@ -255,8 +261,12 @@ public sealed class EndpointCollector
                 AllowsAnonymous = AllowsAnonymous(invocation),
                 Policies = policies,
 
-                // A lambda handler has no symbol to follow, so the endpoint is real but its
-                // flow cannot be traced any further.
+                // A lambda handler has no symbol to follow, so the endpoint's own flow is
+                // read off the lambda instead of off a declaration.
+                Dependencies = handler is null
+                    ? InlineDependencies(invocation, model, cancellationToken)
+                    : [],
+
                 Provenance = handler is null ? RelationProvenance.Inferred : RelationProvenance.Exact,
             });
         }
@@ -371,6 +381,78 @@ public sealed class EndpointCollector
             ? handlerMethod
             : null;
     }
+
+    /// <summary>
+    /// What an inline handler reaches: the services it is handed as parameters, then the
+    /// methods it calls.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the lambda's answer to the two things a controller action contributes to a
+    /// flow — constructor injection and a body — neither of which a lambda has anywhere
+    /// to record, because it declares nothing. Parameters come first because a service the
+    /// handler is handed is where its flow starts.
+    /// </para>
+    /// <para>
+    /// Framework types are collected like any other and simply never match an indexed
+    /// symbol, so route values, <c>HttpContext</c> and <c>CancellationToken</c> fall away
+    /// on their own rather than against a list of names to exclude.
+    /// </para>
+    /// </remarks>
+    private static List<SymbolLink> InlineDependencies(
+        InvocationExpressionSyntax invocation,
+        SemanticModel model,
+        CancellationToken cancellationToken)
+    {
+        var dependencies = new List<SymbolLink>();
+
+        if (invocation.ArgumentList.Arguments is not [.., { Expression: AnonymousFunctionExpressionSyntax lambda }])
+        {
+            return dependencies;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var parameter in HandlerParameters(lambda))
+        {
+            if (model.GetDeclaredSymbol(parameter, cancellationToken) is IParameterSymbol { Type: { } type })
+            {
+                Add(type);
+            }
+        }
+
+        foreach (var call in lambda.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (model.GetSymbolInfo(call, cancellationToken).Symbol is IMethodSymbol method)
+            {
+                Add(method);
+            }
+        }
+
+        return dependencies;
+
+        void Add(ISymbol symbol)
+        {
+            var definition = SymbolNaming.Definition(symbol);
+            var fullyQualifiedName = SymbolNaming.FullyQualifiedName(definition);
+
+            if (dependencies.Count < MaxHandlerDependencies && seen.Add(fullyQualifiedName))
+            {
+                dependencies.Add(new SymbolLink(null, fullyQualifiedName, SymbolNaming.Display(definition)));
+            }
+        }
+    }
+
+    private static IReadOnlyList<ParameterSyntax> HandlerParameters(AnonymousFunctionExpressionSyntax lambda) =>
+        lambda switch
+        {
+            SimpleLambdaExpressionSyntax simple => [simple.Parameter],
+            ParenthesizedLambdaExpressionSyntax parenthesized => parenthesized.ParameterList.Parameters,
+            AnonymousMethodExpressionSyntax { ParameterList: { } list } => list.Parameters,
+            _ => [],
+        };
 
     /// <summary>Reads <c>.RequireAuthorization()</c> off the chain the map call is part of.</summary>
     private static bool RequiresAuthorization(InvocationExpressionSyntax invocation, out IReadOnlyList<string> policies)

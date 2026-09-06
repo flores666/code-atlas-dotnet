@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>CodeAtlas.Desktop.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The view models are plain objects, so they are exercised without starting
+         Avalonia; only the shell they belong to needs a toolkit. -->
+    <ProjectReference Include="../../src/CodeAtlas.Desktop/CodeAtlas.Desktop.csproj" />
+  </ItemGroup>
+
+</Project>

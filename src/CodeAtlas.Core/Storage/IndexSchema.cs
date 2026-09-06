@@ -10,7 +10,7 @@ namespace CodeAtlas.Core.Storage;
 /// </remarks>
 public static class IndexSchema
 {
-    public const int Version = 4;
+    public const int Version = 5;
 
     public const string SchemaVersionKey = "schema_version";
     public const string SourcePathKey = "source_path";
@@ -96,6 +96,18 @@ public static class IndexSchema
             policies          TEXT,
             roles             TEXT,
             provenance        TEXT    NOT NULL
+        );
+
+        -- An inline Minimal API handler declares nothing, so the symbols its flow starts
+        -- from cannot be stored on it the way a controller action's are. Ordered by id on
+        -- read: the collector emits the handler's parameters before its calls, and the
+        -- first of them is where the flow is rooted.
+        CREATE TABLE endpoint_dependencies (
+            id          INTEGER PRIMARY KEY,
+            endpoint_id INTEGER NOT NULL REFERENCES endpoints(id) ON DELETE CASCADE,
+            target_fqn  TEXT    NOT NULL,
+            target_display TEXT NOT NULL,
+            symbol_id   INTEGER REFERENCES symbols(id)
         );
 
         CREATE TABLE data_entities (
@@ -189,6 +201,7 @@ public static class IndexSchema
         CREATE INDEX ix_registrations_impl    ON service_registrations(impl_symbol_id);
         CREATE INDEX ix_endpoints_handler     ON endpoints(handler_symbol_id);
         CREATE INDEX ix_endpoints_route       ON endpoints(route);
+        CREATE INDEX ix_endpoint_deps         ON endpoint_dependencies(endpoint_id);
 
         CREATE INDEX ix_entities_fqn        ON data_entities(entity_fqn);
         CREATE INDEX ix_entities_symbol     ON data_entities(entity_symbol_id);

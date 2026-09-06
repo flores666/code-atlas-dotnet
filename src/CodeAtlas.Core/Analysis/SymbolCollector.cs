@@ -497,7 +497,7 @@ public sealed class SymbolCollector
             return;
         }
 
-        var target = Normalize(bound);
+        var target = SymbolNaming.Definition(bound);
 
         // A call must resolve to a method; anything else came from a syntax shape that
         // only looks like one, and is not recorded as a call.
@@ -554,10 +554,4 @@ public sealed class SymbolCollector
     };
 
     /// <summary>Reduces extension-method invocations and constructed generics to their definition.</summary>
-    private static ISymbol Normalize(ISymbol symbol) => symbol switch
-    {
-        IMethodSymbol { ReducedFrom: { } reduced } => reduced.OriginalDefinition,
-        _ => symbol.OriginalDefinition,
-    };
-
 }

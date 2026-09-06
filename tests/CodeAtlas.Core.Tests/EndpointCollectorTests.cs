@@ -17,7 +17,7 @@ public class EndpointCollectorTests
 
                 namespace Api
                 {
-                    public interface IUserService { }
+                    public interface IUserService { string Find(int id); }
 
                 {{source}}
                 }
@@ -204,12 +204,51 @@ public class EndpointCollectorTests
         Assert.Equal(EndpointKind.MinimalApi, ping.Kind);
         Assert.Equal("Api.Routes.Handle()", ping.HandlerFullyQualifiedName);
 
-        // A lambda handler is a real endpoint whose flow cannot be followed any further.
+        // A named handler carries its own flow, so nothing is read off the call site.
+        Assert.Empty(ping.Dependencies);
+
+        // A lambda handler has no declaration; the endpoint is still real.
         var echo = Route(endpoints, "POST", "/echo");
         Assert.Null(echo.HandlerSymbolId);
         Assert.Equal(RelationProvenance.Inferred, echo.Provenance);
         Assert.True(echo.RequiresAuthorization);
         Assert.Equal(["Writers"], echo.Policies);
+    }
+
+    /// <summary>
+    /// A lambda declares nothing, so what it is handed and what it calls is the only
+    /// record of its flow, and it has to be read off the registration itself.
+    /// </summary>
+    [Fact]
+    public async Task Reads_what_an_inline_handler_depends_on()
+    {
+        var endpoints = await CollectAsync("""
+                public static class Routes
+                {
+                    public static void Map(WebApplication app)
+                    {
+                        app.MapGet("/users/{id}", (IUserService users, int id) => users.Find(id));
+                    }
+                }
+            """);
+
+        // Parameters before calls: the service is where the flow starts.
+        Assert.Equal(
+            ["Api.IUserService", "System.Int32", "Api.IUserService.Find(System.Int32)"],
+            Route(endpoints, "GET", "/users/{id}").Dependencies.Select(link => link.FullyQualifiedName));
+    }
+
+    [Fact]
+    public async Task Reads_nothing_from_a_handler_that_touches_nothing()
+    {
+        var endpoints = await CollectAsync("""
+                public static class Routes
+                {
+                    public static void Map(WebApplication app) => app.MapGet("/ping", () => "pong");
+                }
+            """);
+
+        Assert.Empty(Route(endpoints, "GET", "/ping").Dependencies);
     }
 
     [Fact]
