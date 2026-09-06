@@ -1,0 +1,82 @@
+<!--
+  The design tokens every CodeAtlas view is built from. Views reference these keys
+  and never literal colours, radii or sizes, so the visual language can be extended
+  in one place as later screens are added.
+-->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- Surfaces: a near-white canvas with white cards floating on it. -->
+  <SolidColorBrush x:Key="CanvasBrush" Color="#F6F6F7" />
+  <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="SurfaceMutedBrush" Color="#F2F2F4" />
+  <SolidColorBrush x:Key="SurfaceHoverBrush" Color="#EDEDEF" />
+  <SolidColorBrush x:Key="SurfacePressedBrush" Color="#E4E4E7" />
+  <SolidColorBrush x:Key="DividerBrush" Color="#EAEAEC" />
+  <SolidColorBrush x:Key="BorderSubtleBrush" Color="#E2E2E5" />
+
+  <!-- Text -->
+  <SolidColorBrush x:Key="TextPrimaryBrush" Color="#18181B" />
+  <SolidColorBrush x:Key="TextSecondaryBrush" Color="#71717A" />
+  <SolidColorBrush x:Key="TextTertiaryBrush" Color="#A1A1AA" />
+
+  <!-- Emphasis: the single dark tone used for selection and primary actions. -->
+  <SolidColorBrush x:Key="EmphasisBrush" Color="#18181B" />
+  <SolidColorBrush x:Key="EmphasisHoverBrush" Color="#27272A" />
+  <SolidColorBrush x:Key="EmphasisPressedBrush" Color="#3F3F46" />
+  <SolidColorBrush x:Key="OnEmphasisBrush" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="OnEmphasisMutedBrush" Color="#A1A1AA" />
+
+  <!-- Semantic accents, used only for state. -->
+  <SolidColorBrush x:Key="SuccessBrush" Color="#15803D" />
+  <SolidColorBrush x:Key="SuccessSoftBrush" Color="#ECFDF3" />
+  <SolidColorBrush x:Key="WarningBrush" Color="#B45309" />
+  <SolidColorBrush x:Key="WarningSoftBrush" Color="#FEF6E7" />
+  <SolidColorBrush x:Key="ErrorBrush" Color="#B91C1C" />
+  <SolidColorBrush x:Key="ErrorSoftBrush" Color="#FEF1F1" />
+  <SolidColorBrush x:Key="InfoBrush" Color="#1D4ED8" />
+  <SolidColorBrush x:Key="InfoSoftBrush" Color="#EFF4FF" />
+
+  <!-- Focus: a restrained charcoal ring rather than a bright system blue. -->
+  <SolidColorBrush x:Key="FocusRingBrush" Color="#18181B" />
+
+  <!-- Corner radii -->
+  <CornerRadius x:Key="RadiusCard">14</CornerRadius>
+  <CornerRadius x:Key="RadiusButton">10</CornerRadius>
+  <CornerRadius x:Key="RadiusInput">10</CornerRadius>
+  <CornerRadius x:Key="RadiusRow">8</CornerRadius>
+  <CornerRadius x:Key="RadiusChip">8</CornerRadius>
+
+  <!-- Elevation is defined on the `card` and flyout styles in Controls.axaml,
+       because BoxShadows has no resource form to name here. -->
+
+  <!-- Icons: one stroked line set at a 24x24 origin, scaled by the `icon` style. -->
+  <StreamGeometry x:Key="Icon.Overview">M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Explorer">M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Search">M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14z M16.2 16.2 20 20</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Diagnostics">M12 4 21 20H3z M12 10v4 M12 17h0.01</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Graph">M6 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M18 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M7.6 8.6 11 14 M16.4 8.6 13 14</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Refresh">M20 12a8 8 0 1 1-2.3-5.6 M20 3v4h-4</StreamGeometry>
+
+  <!-- Typography -->
+  <!-- The UI face is Inter, embedded by Program.WithInterFont() and applied as the
+       default family; only the monospace face has to be named here. -->
+  <FontFamily x:Key="MonoFontFamily">JetBrains Mono, Cascadia Mono, Consolas, DejaVu Sans Mono, monospace</FontFamily>
+
+  <x:Double x:Key="FontSizeTitle">22</x:Double>
+  <x:Double x:Key="FontSizeSectionTitle">14</x:Double>
+  <x:Double x:Key="FontSizeBody">13</x:Double>
+  <x:Double x:Key="FontSizeSmall">12</x:Double>
+  <x:Double x:Key="FontSizeCaption">11</x:Double>
+
+  <!-- Fixed shell dimensions, shared so every future screen lines up with the shell. -->
+  <x:Double x:Key="TopBarHeight">56</x:Double>
+  <x:Double x:Key="SidebarWidth">232</x:Double>
+  <x:Double x:Key="DetailsPanelWidth">340</x:Double>
+  <x:Double x:Key="StatusBarHeight">30</x:Double>
+
+  <!-- Spacing scale: 4 / 8 / 12 / 16 / 24 / 32. -->
+  <Thickness x:Key="CardPadding">20</Thickness>
+  <Thickness x:Key="ContentPadding">24</Thickness>
+
+</ResourceDictionary>
