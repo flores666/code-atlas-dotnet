@@ -39,14 +39,29 @@ internal static class GraphLayout
 
         foreach (var ring in nodes.GroupBy(node => node.Depth).OrderBy(group => group.Key))
         {
+            // The innermost ring is usually one node and belongs at the centre. An endpoint
+            // seeds a second, so more than one is spread just far enough not to overlap
+            // rather than stacked on the origin.
             if (ring.Key == 0)
             {
-                foreach (var node in ring)
+                var centre = ring.ToList();
+                if (centre.Count == 1)
                 {
-                    Place(node, 0, 0);
-                    angles[node.Id] = 0;
+                    Place(centre[0], 0, 0);
+                    angles[centre[0].Id] = 0;
+                    previousRadius = 0;
+                    continue;
                 }
 
+                var seedRadius = RadiusFor(centre.Count);
+                for (var i = 0; i < centre.Count; i++)
+                {
+                    var seedAngle = 2 * Math.PI * i / centre.Count;
+                    angles[centre[i].Id] = seedAngle;
+                    Place(centre[i], Math.Cos(seedAngle) * seedRadius, Math.Sin(seedAngle) * seedRadius);
+                }
+
+                previousRadius = seedRadius;
                 continue;
             }
 
@@ -61,7 +76,7 @@ internal static class GraphLayout
             // so a crowded inner ring pushes the outer ones out rather than colliding.
             var radius = Math.Max(
                 Math.Max(BaseRadius, previousRadius + RingGap),
-                ordered.Count * NodeArc / (2 * Math.PI));
+                RadiusFor(ordered.Count));
             previousRadius = radius;
 
             for (var i = 0; i < ordered.Count; i++)
@@ -76,6 +91,17 @@ internal static class GraphLayout
 
         return Normalise(nodes);
     }
+
+    /// <summary>
+    /// The radius at which <paramref name="count"/> nodes sit <see cref="NodeArc"/> apart.
+    /// </summary>
+    /// <remarks>
+    /// Measured along the chord between neighbours rather than the arc: for a ring of two
+    /// or three the arc badly overestimates how far apart they actually are, and they would
+    /// overlap. The two converge as the ring fills.
+    /// </remarks>
+    private static double RadiusFor(int count) =>
+        count <= 1 ? 0 : NodeArc / (2 * Math.Sin(Math.PI / count));
 
     private static void Place(GraphNodeViewModel node, double centreX, double centreY)
     {

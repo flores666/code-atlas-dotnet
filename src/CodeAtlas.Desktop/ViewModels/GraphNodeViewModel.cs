@@ -19,11 +19,17 @@ public sealed class GraphNodeViewModel : ObservableObject
     private double _x;
     private double _y;
 
-    public GraphNodeViewModel(GraphNode node, bool isRoot, bool isExpanded, GraphCommands commands)
+    public GraphNodeViewModel(
+        GraphNode node,
+        bool isRoot,
+        bool isExpanded,
+        GraphCommands commands,
+        string? infrastructure = null)
     {
         ArgumentNullException.ThrowIfNull(node);
         ArgumentNullException.ThrowIfNull(commands);
 
+        Infrastructure = infrastructure ?? string.Empty;
         Symbol = node.Symbol;
         Depth = node.Depth;
         HiddenNeighbours = node.HiddenNeighbours;
@@ -39,6 +45,15 @@ public sealed class GraphNodeViewModel : ObservableObject
     }
 
     public IndexedSymbol Symbol { get; }
+
+    /// <summary>
+    /// The infrastructure this symbol stands on — the table an entity maps to, or the
+    /// technology a boundary type talks to — shown as a badge so a flow can be read
+    /// without opening every node.
+    /// </summary>
+    public string Infrastructure { get; }
+
+    public bool HasInfrastructure => Infrastructure.Length > 0;
 
     public long Id => Symbol.Id;
 

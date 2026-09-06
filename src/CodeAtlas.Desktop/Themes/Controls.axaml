@@ -482,6 +482,31 @@
     <Setter Property="HorizontalAlignment" Value="Stretch" />
   </Style>
 
+  <!-- The HTTP verb badge. Fixed width so a column of routes stays aligned. -->
+  <Style Selector="Border.verb">
+    <Setter Property="Background" Value="{DynamicResource SurfaceMutedBrush}" />
+    <Setter Property="CornerRadius" Value="{DynamicResource RadiusChip}" />
+    <Setter Property="Padding" Value="6,3" />
+    <Setter Property="Width" Value="62" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="Border.verb > TextBlock">
+    <Setter Property="FontSize" Value="{DynamicResource FontSizeCaption}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="TextTrimming" Value="None" />
+  </Style>
+
+  <Style Selector="ListBoxItem:selected Border.verb">
+    <Setter Property="Background" Value="#33FFFFFF" />
+  </Style>
+
+  <Style Selector="ListBoxItem:selected Border.verb > TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource OnEmphasisBrush}" />
+  </Style>
+
   <!-- ==================== Graph ==================== -->
 
   <Style Selector="NumericUpDown">

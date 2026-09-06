@@ -6,6 +6,8 @@ public enum AppSection
     Overview,
     Explorer,
     Search,
+    Endpoints,
+    Infrastructure,
     Graph,
     Diagnostics,
 }

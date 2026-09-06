@@ -44,6 +44,14 @@ public static class NeighborhoodBuilder
         var truncated = false;
 
         var frontier = new List<long> { rootId };
+        foreach (var seed in options.Seeds)
+        {
+            if (seed != rootId && depths.TryAdd(seed, 0))
+            {
+                frontier.Add(seed);
+            }
+        }
+
         for (var depth = 1; depth <= depthLimit && frontier.Count > 0 && !truncated; depth++)
         {
             frontier = Expand(database, frontier, depth, kinds, options, maxNodes, depths, ref truncated);
