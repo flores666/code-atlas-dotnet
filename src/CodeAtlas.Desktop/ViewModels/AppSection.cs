@@ -9,6 +9,7 @@ public enum AppSection
     Endpoints,
     Infrastructure,
     GitChanges,
+    Impact,
     Graph,
     Diagnostics,
 }

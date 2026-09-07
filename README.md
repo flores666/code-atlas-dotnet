@@ -4,15 +4,16 @@ A local-first, read-only semantic explorer for C#/.NET solutions. It loads a sol
 Roslyn, indexes the declarations and exact semantic relations into a local SQLite file, and
 lets you search, inspect and map them offline.
 
-**MVP 4** — the semantic code map, how an ASP.NET Core application is composed, where it
-meets everything outside itself, and how it differs from its Git baseline. Declarations,
+**MVP 5** — the semantic code map, how an ASP.NET Core application is composed, where it
+meets everything outside itself, how it differs from its Git baseline, and what a change
+to any of it can affect. Declarations,
 calls, references, implementations, inheritance and type dependencies; a bounded graph of
 the neighbourhood around any symbol; DI registrations and the HTTP endpoints they are
 wired behind; the EF Core model and what reads and writes it; configuration keys and the
 options types they bind; the infrastructure boundaries the application crosses; and the
-working tree's own changes mapped onto the symbols they touch. No runtime tracing,
-Kubernetes analysis, message-broker topology, AI, embeddings, impact scoring or context
-export.
+working tree's own changes mapped onto the symbols they touch; and deterministic impact
+analysis over all of it. No runtime tracing, Kubernetes analysis, message-broker topology,
+AI, embeddings or context export.
 
 ## Running
 
@@ -70,8 +71,30 @@ the index already holds. **Files** shows Git's own account of each path with its
 **History** the recent commits, or the selected file's own. The graph gains a **Changed
 code** filter, which narrows it to the symbols the working tree changed.
 
+**Impact** answers "what can this change affect". Start from a method, a type, an
+interface, an endpoint, an entity or a symbol the working tree changed, and it walks the
+recorded relations outwards:
+
 ```
-dotnet test              # 213 tests, including a real end-to-end indexing run
+IPricingService                                              High impact
+  Direct callers: 3     Indirect callers: 5     Endpoints: 2
+  Database entities: 2  External integrations: 1
+
+  Risk surface                    5 of 7 risk properties present
+  ! HTTP endpoints reachable      2 endpoints, including GET /orders/{id}
+  ! Authorization involved        1 reachable endpoint requires authorization
+  ! Persistence involved          2 entities, including Order, Invoice
+  ! External integration          1 boundary, including HTTP crm
+  ! Shared abstraction            It is an interface, 2 implementations
+  · High fan-in                   3 direct callers; 5 or more counts as high
+```
+
+Direct and indirect effects stay apart, every impacted symbol carries its distance in
+hops, and each risk property is shown with the fact behind it — present or not, so the
+surface accounts for what it ruled out as well as what it found.
+
+```
+dotnet test              # 244 tests, including a real end-to-end indexing run
                          # and change mapping against a real Git working tree
 ```
 
@@ -312,6 +335,48 @@ to follow, which is why it is a node restriction on the walk rather than a
 traverses the whole neighbourhood and merely declines to admit what falls outside the set —
 so two changed symbols joined through unchanged code still both appear — and the chip is
 only offered while there is a changed set to filter by.
+
+**Impact is two closures, not one.** "Who calls this" and "what does this touch" are
+different questions, and answering them with one walk would overstate both. The call
+closure follows `Calls` alone and is what direct and indirect callers mean; the dependency
+closure follows everything that constitutes a dependency — calls, references, implements,
+overrides, inherits, injects, resolves and signature types — and is the set whose
+endpoints, entities, integrations and configuration the report describes. Every entry is
+an edge the compiler recorded, so the same index and symbol always give the same answer
+and a reader can check any line of it.
+
+**A type is seeded through its members.** Calls land on methods, not on the class that
+declares them, so asking what depends on a service and walking only from the type itself
+finds nothing. The root's members seed the walk alongside it, which is what makes "eight
+places call this service" answerable at all.
+
+**The resource question runs the other way.** A boundary out of the application, a
+configuration read and an entity write are recorded against the component that performs
+them — the implementation behind the interface, the client that interface is wired to —
+which sits *below* a change rather than above it. Walking only backwards therefore finds
+every caller of a service and none of the infrastructure it talks to, which is half the
+answer. So the resource facts are gathered over the backwards closure together with what
+that closure in turn runs, following calls, injection and container resolution forwards.
+
+**Distance is on every impacted symbol, and it is the shortest path.** The walk is
+breadth-first, so a symbol is recorded the first time it is reached. Without it a
+transitive list reads as one undifferentiated blast radius, and an effect twenty hops away
+is presented as though it were the same claim as one two hops away.
+
+**Risk is a set of facts, not a score.** Seven properties, each shown with the evidence
+that decided it: reachable endpoints, public boundary, authorization, persistence, external
+integration, fan-in and shared abstraction. The level is a count of how many are present
+against thresholds that are public constants, so the UI states the rule it applied rather
+than only its verdict, and a reader can disagree with the assessment by checking the facts
+under it. Absent signals are shown too, because what a change was found *not* to touch is
+part of the answer. Nothing here is learned, weighted or opaque.
+
+**Impact stops where the compiler's knowledge stops.** A dispatch resolved at run time is
+not an edge, so it is not walked. In a MediatR-style application the request handlers a
+change reaches are found — they inject the same services as anything else — but the HTTP
+endpoints above them are not, because nothing statically connects an inline handler that
+sends a request to the class that handles it. The endpoint count is then honestly zero
+rather than guessed at, which is the same rule the endpoint list itself follows.
 
 **No ORM and no MVVM framework.** The queries are hand-written SQL over
 `Microsoft.Data.Sqlite`, and change notification is a ~30 line `ObservableObject`. Neither

@@ -31,14 +31,8 @@ public static class SymbolGlyph
     };
 
     /// <summary>True for the kinds that contain other symbols; they carry the filled badge.</summary>
-    public static bool IsContainer(IndexedSymbolKind kind) => kind
-        is IndexedSymbolKind.Namespace
-        or IndexedSymbolKind.Class
-        or IndexedSymbolKind.Interface
-        or IndexedSymbolKind.Record
-        or IndexedSymbolKind.Struct
-        or IndexedSymbolKind.Enum
-        or IndexedSymbolKind.Delegate;
+    public static bool IsContainer(IndexedSymbolKind kind) =>
+        kind == IndexedSymbolKind.Namespace || IndexedSymbolKinds.IsType(kind);
 
     /// <summary>The C# keyword for a kind, used as its human-readable label.</summary>
     public static string Keyword(IndexedSymbolKind kind) => kind switch
