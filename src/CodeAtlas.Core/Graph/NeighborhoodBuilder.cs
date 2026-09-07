@@ -144,11 +144,22 @@ public static class NeighborhoodBuilder
             .ThenBy(edge => edge.SourceId)
             .ThenBy(edge => edge.TargetId);
 
+        var restriction = options.RestrictTo;
+
         foreach (var edge in edges)
         {
             foreach (var id in (ReadOnlySpan<long>)[edge.SourceId, edge.TargetId])
             {
                 if (depths.ContainsKey(id))
+                {
+                    continue;
+                }
+
+                // A restricted walk still traverses the whole neighbourhood; it simply
+                // does not admit what falls outside the set. Skipping rather than stopping
+                // is what lets two changed symbols joined through unchanged code still
+                // both appear.
+                if (restriction is not null && !restriction.Contains(id))
                 {
                     continue;
                 }

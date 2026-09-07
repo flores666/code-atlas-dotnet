@@ -10,7 +10,7 @@ namespace CodeAtlas.Core.Storage;
 /// </remarks>
 public static class IndexSchema
 {
-    public const int Version = 5;
+    public const int Version = 6;
 
     public const string SchemaVersionKey = "schema_version";
     public const string SourcePathKey = "source_path";
@@ -42,6 +42,7 @@ public static class IndexSchema
             file_path     TEXT,
             line          INTEGER,
             start_column  INTEGER,
+            end_line      INTEGER,
             accessibility TEXT
         );
 
@@ -190,6 +191,11 @@ public static class IndexSchema
         CREATE INDEX ix_symbols_fqn       ON symbols(fqn, project_id);
         CREATE INDEX ix_symbols_project   ON symbols(project_id, namespace);
         CREATE INDEX ix_symbols_container ON symbols(container_fqn);
+
+        -- Mapping a diff to symbols asks for one file at a time, so the file is the key
+        -- that query needs; the line ordering makes the containment scan a walk in
+        -- declaration order rather than a sort.
+        CREATE INDEX ix_symbols_file      ON symbols(file_path, line);
 
         CREATE INDEX        ix_attributes_symbol ON symbol_attributes(symbol_id);
         CREATE UNIQUE INDEX ux_relations_edge    ON relations(source_symbol_id, kind, target_fqn);

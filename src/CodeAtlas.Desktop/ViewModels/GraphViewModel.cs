@@ -96,6 +96,8 @@ public sealed class GraphViewModel : ObservableObject
     private bool _showDatabase = true;
     private bool _showConfiguration = true;
     private bool _showExternalServices = true;
+    private bool _showChangedOnly;
+    private IReadOnlySet<long> _changed = new HashSet<long>();
 
     public GraphViewModel()
     {
@@ -270,6 +272,53 @@ public sealed class GraphViewModel : ObservableObject
         set => SetFilter(ref _showExternalServices, value);
     }
 
+    /// <summary>
+    /// Narrows the graph to the symbols the working tree changed.
+    /// </summary>
+    /// <remarks>
+    /// Unlike every other chip this one filters nodes rather than edge kinds, because
+    /// "changed code" is a statement about which symbols matter rather than about which
+    /// relations to follow. It is only offered while there is a changed set to filter by,
+    /// so it cannot silently empty the graph in a clean working tree.
+    /// </remarks>
+    public bool ShowChangedOnly
+    {
+        get => _showChangedOnly;
+        set => SetFilter(ref _showChangedOnly, value);
+    }
+
+    /// <summary>False in a clean working tree, which is when the chip has nothing to offer.</summary>
+    public bool CanFilterChanged => _changed.Count > 0;
+
+    /// <summary>
+    /// Hands the graph the symbols Git reports as changed.
+    /// </summary>
+    /// <remarks>
+    /// A set the shell pushes rather than a query the graph makes: the changed set is Git
+    /// state, it is already computed for the Git Changes section, and the graph has no
+    /// business reading a repository.
+    /// </remarks>
+    public void SetChangedSymbols(IReadOnlySet<long> changed)
+    {
+        ArgumentNullException.ThrowIfNull(changed);
+
+        _changed = changed;
+        OnPropertyChanged(nameof(CanFilterChanged));
+
+        // A filter that can no longer be satisfied is dropped rather than left on, so the
+        // graph never comes back empty for a reason the toolbar has stopped showing.
+        if (_showChangedOnly && changed.Count == 0)
+        {
+            _showChangedOnly = false;
+            OnPropertyChanged(nameof(ShowChangedOnly));
+        }
+
+        if (_showChangedOnly)
+        {
+            Invalidate();
+        }
+    }
+
     /// <summary>Set by the shell: the graph only queries while it is the visible section.</summary>
     public bool IsActive
     {
@@ -355,6 +404,7 @@ public sealed class GraphViewModel : ObservableObject
             Kinds = SelectedKinds(),
             Expanded = _expanded.ToList(),
             Seeds = _seeds,
+            RestrictTo = _showChangedOnly && _changed.Count > 0 ? _changed : null,
         };
 
         try
@@ -648,12 +698,17 @@ public sealed class GraphViewModel : ObservableObject
         _showConfiguration = groups.Contains(RelationGroupKind.Configuration);
         _showExternalServices = groups.Contains(RelationGroupKind.ExternalServices);
 
+        // A flow is a question about how something is wired, not about what changed, and a
+        // restriction left on from an earlier click would gut the answer.
+        _showChangedOnly = false;
+
         foreach (var property in (string[])
                  [
                      nameof(Depth), nameof(IsDepth1), nameof(IsDepth2), nameof(IsDepth3),
                      nameof(ShowCalls), nameof(ShowComposition), nameof(ShowReferences),
                      nameof(ShowTypeDependencies), nameof(ShowInheritance), nameof(ShowImplementations),
                      nameof(ShowDatabase), nameof(ShowConfiguration), nameof(ShowExternalServices),
+                     nameof(ShowChangedOnly),
                  ])
         {
             OnPropertyChanged(property);

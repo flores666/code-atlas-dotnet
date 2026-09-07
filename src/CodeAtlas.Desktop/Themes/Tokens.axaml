@@ -58,6 +58,7 @@
   <StreamGeometry x:Key="Icon.Endpoints">M4 8h16 M4 16h16 M9 4 7 20 M17 4l-2 16</StreamGeometry>
   <StreamGeometry x:Key="Icon.Infrastructure">M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7 M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3</StreamGeometry>
   <StreamGeometry x:Key="Icon.Graph">M6 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M18 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M7.6 8.6 11 14 M16.4 8.6 13 14</StreamGeometry>
+  <StreamGeometry x:Key="Icon.GitChanges">M7 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M7 22a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M18 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M7 6v12 M18 10v1a4 4 0 0 1-4 4H7</StreamGeometry>
   <StreamGeometry x:Key="Icon.Refresh">M20 12a8 8 0 1 1-2.3-5.6 M20 3v4h-4</StreamGeometry>
 
   <!-- Typography -->

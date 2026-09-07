@@ -19,7 +19,26 @@ internal static class TestProjectFactory
         .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
         .ToList();
 
-    public static Project Create(string name, params (string FileName, string Source)[] documents)
+    /// <summary>
+    /// Builds a project over files that really exist on disk, reading their current
+    /// content.
+    /// </summary>
+    /// <remarks>
+    /// The change-mapping tests need this rather than <see cref="Create"/>: a diff is
+    /// mapped by file path and line, so the index has to be built from the same paths Git
+    /// reports and from the content that is on disk right now.
+    /// </remarks>
+    public static Project CreateFromFiles(string name, params string[] absolutePaths) =>
+        Build(name, absolutePaths.Select(path => (path, File.ReadAllText(path))).ToArray());
+
+    public static Project Create(string name, params (string FileName, string Source)[] documents) =>
+        Build(
+            name,
+            documents.Select(document => (
+                Path.Combine(SourceRoot, document.FileName),
+                document.Source)).ToArray());
+
+    private static Project Build(string name, (string Path, string Source)[] documents)
     {
         var workspace = new AdhocWorkspace();
         var projectId = ProjectId.CreateNewId();
@@ -34,13 +53,13 @@ internal static class TestProjectFactory
             parseOptions: new CSharpParseOptions(LanguageVersion.Latest),
             metadataReferences: RuntimeReferences));
 
-        foreach (var (fileName, source) in documents)
+        foreach (var (path, source) in documents)
         {
             workspace.AddDocument(DocumentInfo.Create(
                 DocumentId.CreateNewId(projectId),
-                fileName,
+                Path.GetFileName(path),
                 loader: TextLoader.From(TextAndVersion.Create(SourceText.From(source), VersionStamp.Default)),
-                filePath: Path.Combine(SourceRoot, fileName)));
+                filePath: path));
         }
 
         return workspace.CurrentSolution.GetProject(projectId)!;

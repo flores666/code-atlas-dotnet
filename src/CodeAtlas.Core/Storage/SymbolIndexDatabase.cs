@@ -558,6 +558,33 @@ public sealed class SymbolIndexDatabase : IDisposable
     // These exist for NeighborhoodBuilder, which owns how far a walk goes. They answer
     // exactly one hop each, so no query here can grow with the size of the solution.
 
+    /// <summary>
+    /// Every symbol declared in one file, in declaration order.
+    /// </summary>
+    /// <remarks>
+    /// The unit a diff is mapped in: a hunk names a file and some of its lines, and this is
+    /// the set of declarations those lines can fall inside. Namespaces are excluded because
+    /// a namespace's span covers the whole file, so every change would land on it and say
+    /// nothing.
+    /// </remarks>
+    public IReadOnlyList<IndexedSymbol> GetSymbolsInFile(string filePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+
+        lock (_gate)
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = $"""
+                {SelectSymbol}
+                WHERE s.file_path = @path COLLATE NOCASE AND s.kind <> 'Namespace'
+                ORDER BY s.line, s.id
+                """;
+            command.Parameters.AddWithValue("@path", filePath);
+
+            return ReadSymbols(command);
+        }
+    }
+
     public IReadOnlyList<IndexedSymbol> GetSymbols(IReadOnlyCollection<long> ids)
     {
         ArgumentNullException.ThrowIfNull(ids);
@@ -1030,7 +1057,7 @@ public sealed class SymbolIndexDatabase : IDisposable
 
     private const string SelectSymbol = """
         SELECT s.id, s.kind, s.name, s.fqn, s.display, p.name, s.namespace,
-               s.container_fqn, s.file_path, s.line, s.start_column, s.accessibility
+               s.container_fqn, s.file_path, s.line, s.start_column, s.end_line, s.accessibility
         FROM symbols s
         LEFT JOIN projects p ON p.id = s.project_id
         """;
@@ -1055,7 +1082,8 @@ public sealed class SymbolIndexDatabase : IDisposable
                 FilePath = reader.IsDBNull(8) ? null : reader.GetString(8),
                 Line = reader.IsDBNull(9) ? null : reader.GetInt32(9),
                 Column = reader.IsDBNull(10) ? null : reader.GetInt32(10),
-                Accessibility = reader.IsDBNull(11) ? null : reader.GetString(11),
+                EndLine = reader.IsDBNull(11) ? null : reader.GetInt32(11),
+                Accessibility = reader.IsDBNull(12) ? null : reader.GetString(12),
             });
         }
 
