@@ -203,6 +203,20 @@
                        IsEnabled="{Binding HasWorkspace}"
                        IsChecked="{Binding ActiveSection, Mode=TwoWay,
                                    Converter={StaticResource SectionIs},
+                                   ConverterParameter={x:Static vm:AppSection.GitChanges}}">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+              <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.GitChanges}" />
+              <TextBlock Grid.Column="1" Text="Git Changes" Margin="10,0,0,0" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2" Classes="dim" VerticalAlignment="Center"
+                         IsVisible="{Binding GitChanges.HasChangedFiles}"
+                         Text="{Binding GitChanges.ChangedFileCount}" />
+            </Grid>
+          </RadioButton>
+
+          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
+                       IsEnabled="{Binding HasWorkspace}"
+                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
+                                   Converter={StaticResource SectionIs},
                                    ConverterParameter={x:Static vm:AppSection.Graph}}">
             <StackPanel Orientation="Horizontal" Spacing="10">
               <Path Classes="icon" Data="{DynamicResource Icon.Graph}" />
@@ -784,6 +798,252 @@
             </Border>
           </Grid>
 
+          <!-- Git Changes -->
+          <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16"
+                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
+                            ConverterParameter={x:Static vm:AppSection.GitChanges}}">
+
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="16"
+                  DataContext="{Binding GitChanges}" x:DataType="vm:GitChangesViewModel">
+              <StackPanel Grid.Column="0" Spacing="4" MinWidth="0">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <TextBlock Classes="title" Text="Git Changes" />
+                  <Border Classes="chip" VerticalAlignment="Center"
+                          IsVisible="{Binding HasRepository}"
+                          ToolTip.Tip="The checked-out branch, or the commit when the head is detached">
+                    <TextBlock Text="{Binding Branch}" Classes="mono" />
+                  </Border>
+                  <Border Classes="chip warning" VerticalAlignment="Center"
+                          IsVisible="{Binding IsDetached}"
+                          ToolTip.Tip="HEAD is detached, so the baseline is a commit rather than a branch">
+                    <TextBlock Text="detached" />
+                  </Border>
+                </StackPanel>
+                <TextBlock Classes="meta" Text="{Binding StatusSummary}"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Classes="dimmer" Text="{Binding Subtitle}"
+                           TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+
+              <TextBox Grid.Column="1" Theme="{DynamicResource SearchBoxTheme}"
+                       Width="200" VerticalAlignment="Center"
+                       PlaceholderText="Filter"
+                       IsEnabled="{Binding HasRepository}"
+                       Text="{Binding Filter, Mode=TwoWay}" />
+
+              <!-- Git state moves under the reader's feet, so re-reading it is explicit
+                   rather than watched: no file watcher, and one click to be current. -->
+              <Button Grid.Column="2" Theme="{DynamicResource SecondaryButtonTheme}"
+                      VerticalAlignment="Center"
+                      Command="{Binding RefreshCommand}"
+                      ToolTip.Tip="Re-read the working tree">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Path Classes="icon" Data="{DynamicResource Icon.Refresh}" />
+                  <TextBlock Text="Refresh" VerticalAlignment="Center" />
+                </StackPanel>
+              </Button>
+            </Grid>
+
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8"
+                        DataContext="{Binding GitChanges}" x:DataType="vm:GitChangesViewModel"
+                        IsVisible="{Binding HasRepository}">
+              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
+                      Classes.selected="{Binding IsSymbolsView}" Content="Changed symbols"
+                      Command="{Binding SetViewCommand}"
+                      CommandParameter="{x:Static vm:GitChangesView.Symbols}" />
+              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
+                      Classes.selected="{Binding IsFilesView}" Content="Files"
+                      Command="{Binding SetViewCommand}"
+                      CommandParameter="{x:Static vm:GitChangesView.Files}" />
+              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
+                      Classes.selected="{Binding IsHistoryView}" Content="History"
+                      Command="{Binding SetViewCommand}"
+                      CommandParameter="{x:Static vm:GitChangesView.History}" />
+              <ProgressBar Width="120" IsIndeterminate="True" VerticalAlignment="Center"
+                           IsVisible="{Binding IsLoading}" />
+            </StackPanel>
+
+            <Panel Grid.Row="2" DataContext="{Binding GitChanges}" x:DataType="vm:GitChangesViewModel">
+
+              <!-- Not a Git working tree at all, which is a normal state rather than a failure. -->
+              <Border Classes="card" IsVisible="{Binding !HasRepository}">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                  <TextBlock Text="No Git repository" Classes="section" HorizontalAlignment="Center" />
+                  <TextBlock Classes="meta" HorizontalAlignment="Center"
+                             TextAlignment="Center" TextWrapping="Wrap" MaxWidth="420"
+                             Text="This workspace is not inside a Git working tree, so there is no baseline to compare it against." />
+                </StackPanel>
+              </Border>
+
+              <Panel IsVisible="{Binding HasRepository}">
+                <!-- Changed symbols: the diff expressed in the terms the rest of the app
+                     speaks, so a row leads straight into the semantic map. -->
+                <Border Classes="card" Padding="10" ClipToBounds="True"
+                        IsVisible="{Binding IsSymbolsView}">
+                  <Panel>
+                    <ListBox ItemsSource="{Binding Symbols}"
+                             SelectedItem="{Binding SelectedSymbol, Mode=TwoWay}"
+                             Theme="{DynamicResource ResultListTheme}"
+                             ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                             IsVisible="{Binding HasChangedSymbols}">
+                      <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ChangedSymbolViewModel">
+                          <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
+                            <Border Grid.Column="0" Classes="glyph"
+                                    Classes.container="{Binding IsContainer}"
+                                    VerticalAlignment="Center">
+                              <TextBlock Text="{Binding Glyph}" />
+                            </Border>
+                            <StackPanel Grid.Column="1" MinWidth="0">
+                              <TextBlock Text="{Binding Display}" Classes="strong"
+                                         TextTrimming="CharacterEllipsis" />
+                              <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="6">
+                                <TextBlock Grid.Column="0" Text="{Binding Kind}" Classes="dimmer" />
+                                <TextBlock Grid.Column="1" Text="{Binding Container}" Classes="dim"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="2" Text="{Binding Origin}" Classes="dimmer"
+                                           TextTrimming="CharacterEllipsis" />
+                              </Grid>
+                            </StackPanel>
+
+                            <!-- A declaration read from the baseline was never resolved by the
+                                 compiler, and says so rather than passing as indexed truth. -->
+                            <Border Grid.Column="2" Classes="chip" VerticalAlignment="Center"
+                                    IsVisible="{Binding IsInferred}"
+                                    ToolTip.Tip="Read from the baseline source, not resolved by the compiler">
+                              <TextBlock Text="inferred" />
+                            </Border>
+
+                            <Border Grid.Column="3" Classes="chip" VerticalAlignment="Center"
+                                    Classes.success="{Binding IsAdded}"
+                                    Classes.warning="{Binding IsRemoved}">
+                              <TextBlock Text="{Binding ChangeLabel}" />
+                            </Border>
+                          </Grid>
+                        </DataTemplate>
+                      </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                                IsVisible="{Binding !HasChangedSymbols}">
+                      <TextBlock Text="No changed symbols" Classes="section" HorizontalAlignment="Center" />
+                      <TextBlock Classes="meta" HorizontalAlignment="Center"
+                                 TextAlignment="Center" TextWrapping="Wrap" MaxWidth="440"
+                                 Text="{Binding EmptySymbolsNotice}" />
+                    </StackPanel>
+                  </Panel>
+                </Border>
+
+                <!-- Files: Git's own account, with the diff of whichever path is selected. -->
+                <Grid RowDefinitions="*,Auto" RowSpacing="12" IsVisible="{Binding IsFilesView}">
+                  <Border Grid.Row="0" Classes="card" Padding="10" ClipToBounds="True">
+                    <Panel>
+                      <ListBox ItemsSource="{Binding Files}"
+                               SelectedItem="{Binding SelectedFile, Mode=TwoWay}"
+                               Theme="{DynamicResource ResultListTheme}"
+                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                               IsVisible="{Binding HasChangedFiles}">
+                        <ListBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ChangedFileViewModel">
+                            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="12">
+                              <StackPanel Grid.Column="0" MinWidth="0">
+                                <TextBlock Text="{Binding Name}" Classes="strong"
+                                           TextTrimming="CharacterEllipsis" />
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                                  <TextBlock Grid.Column="0" Text="{Binding Directory}" Classes="dim"
+                                             TextTrimming="CharacterEllipsis" />
+                                  <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
+                                             IsVisible="{Binding HasOrigin}"
+                                             TextTrimming="CharacterEllipsis" />
+                                </Grid>
+                              </StackPanel>
+                              <TextBlock Grid.Column="1" Text="{Binding Stat}" Classes="caption mono"
+                                         VerticalAlignment="Center"
+                                         IsVisible="{Binding HasStat}"
+                                         ToolTip.Tip="Lines added and removed" />
+                              <TextBlock Grid.Column="2" Text="{Binding StageLabel}" Classes="dimmer"
+                                         VerticalAlignment="Center"
+                                         IsVisible="{Binding HasStageLabel}"
+                                         ToolTip.Tip="Where this change currently lives" />
+                              <Border Grid.Column="3" Classes="chip" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding ChangeLabel}" />
+                              </Border>
+
+                              <Grid.ContextMenu>
+                                <ContextMenu>
+                                  <MenuItem Header="Open file"
+                                            Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).GitChanges.OpenFileCommand}"
+                                            CommandParameter="{Binding}" />
+                                </ContextMenu>
+                              </Grid.ContextMenu>
+                            </Grid>
+                          </DataTemplate>
+                        </ListBox.ItemTemplate>
+                      </ListBox>
+
+                      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                                  IsVisible="{Binding !HasChangedFiles}">
+                        <TextBlock Text="Nothing changed" Classes="section" HorizontalAlignment="Center" />
+                        <TextBlock Classes="meta" HorizontalAlignment="Center"
+                                   TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
+                                   Text="The working tree matches its baseline." />
+                      </StackPanel>
+                    </Panel>
+                  </Border>
+
+                  <Border Grid.Row="1" Classes="card" Padding="10" MaxHeight="300"
+                          ClipToBounds="True" IsVisible="{Binding HasDiff}">
+                    <StackPanel Spacing="8">
+                      <TextBlock Classes="overline" Text="Diff" />
+                      <ScrollViewer HorizontalScrollBarVisibility="Auto" MaxHeight="250">
+                        <SelectableTextBlock Text="{Binding DiffText}" Classes="mono caption" />
+                      </ScrollViewer>
+                    </StackPanel>
+                  </Border>
+                </Grid>
+
+                <!-- History: the branch's recent commits, or the selected file's. -->
+                <Border Classes="card" Padding="10" ClipToBounds="True"
+                        IsVisible="{Binding IsHistoryView}">
+                  <Grid RowDefinitions="Auto,*" RowSpacing="8">
+                    <TextBlock Grid.Row="0" Classes="overline" Text="{Binding HistoryCaption}" />
+                    <Panel Grid.Row="1">
+                      <ListBox ItemsSource="{Binding Commits}"
+                               Theme="{DynamicResource ResultListTheme}"
+                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                               IsVisible="{Binding HasCommits}">
+                        <ListBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:CommitViewModel">
+                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                              <TextBlock Grid.Column="0" Text="{Binding ShortHash}" Classes="mono dim"
+                                         VerticalAlignment="Center" />
+                              <StackPanel Grid.Column="1" MinWidth="0">
+                                <TextBlock Text="{Binding Subject}" Classes="strong"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Author}" Classes="dim"
+                                           TextTrimming="CharacterEllipsis" />
+                              </StackPanel>
+                              <TextBlock Grid.Column="2" Text="{Binding When}" Classes="dimmer"
+                                         VerticalAlignment="Center" />
+                            </Grid>
+                          </DataTemplate>
+                        </ListBox.ItemTemplate>
+                      </ListBox>
+
+                      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                                  IsVisible="{Binding !HasCommits}">
+                        <TextBlock Text="No commits" Classes="section" HorizontalAlignment="Center" />
+                        <TextBlock Classes="meta" HorizontalAlignment="Center"
+                                   TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
+                                   Text="This repository has no commits yet, so there is no history and no baseline." />
+                      </StackPanel>
+                    </Panel>
+                  </Grid>
+                </Border>
+              </Panel>
+            </Panel>
+          </Grid>
+
           <!-- Graph -->
           <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16"
                 IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
@@ -842,10 +1102,18 @@
                               IsChecked="{Binding ShowConfiguration, Mode=TwoWay}"
                               Content="Configuration"
                               ToolTip.Tip="Options types and the components that read them" />
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,20,2"
+                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
                               IsChecked="{Binding ShowExternalServices, Mode=TwoWay}"
                               Content="External services"
                               ToolTip.Tip="Where the application reaches infrastructure it does not own" />
+
+                <!-- Narrows the nodes rather than the edges, and is offered only while the
+                     working tree has something to narrow to. -->
+                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,20,2"
+                              IsChecked="{Binding ShowChangedOnly, Mode=TwoWay}"
+                              IsVisible="{Binding CanFilterChanged}"
+                              Content="Changed code"
+                              ToolTip.Tip="Show only the symbols the working tree changed" />
 
                 <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2" VerticalAlignment="Center">
                   <Border Classes="chip warning" IsVisible="{Binding IsTruncated}"

@@ -82,6 +82,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         Graph.NodeSelected += id => _ = ShowDetailsAsync(id, updateGraphRoot: false);
         Graph.OpenSourceRequested += OpenSource;
 
+        // A changed symbol is explored the way an endpoint or a resource is: show it, and
+        // open the graph on it, because "what does this change touch" is a graph question.
+        GitChanges.SymbolSelected += id => _ = ShowChangedSymbolAsync(id);
+        GitChanges.ChangedSetUpdated += Graph.SetChangedSymbols;
+        GitChanges.StatusReported += message => StatusMessage = message;
+
         foreach (var path in _recentWorkspaces.Load())
         {
             RecentWorkspaces.Add(new RecentWorkspaceViewModel(path, OpenRecentCommand));
@@ -136,6 +142,29 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     /// <summary>The semantic neighbourhood of the selected symbol.</summary>
     public GraphViewModel Graph { get; } = new();
+
+    /// <summary>How the working tree differs from its Git baseline.</summary>
+    public GitChangesViewModel GitChanges { get; } = new();
+
+    /// <summary>
+    /// Opens a changed symbol: its details, and the graph rooted on it.
+    /// </summary>
+    /// <remarks>
+    /// Nothing about this is Git-specific by the time it lands here — the callers, callees,
+    /// implementations, endpoints and entities of a changed method are the ones the index
+    /// already holds. Mapping the diff to a symbol is the whole of the work; navigating
+    /// from it is the existing details pane.
+    /// </remarks>
+    private async Task ShowChangedSymbolAsync(long symbolId)
+    {
+        await ShowDetailsAsync(symbolId);
+
+        if (Details is { } details)
+        {
+            StatusMessage = $"{details.Symbol.Display} changed in the working tree.";
+            ActiveSection = AppSection.Graph;
+        }
+    }
 
     // ---- endpoints ----------------------------------------------------------
 
@@ -691,6 +720,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             ? $"Git repository: {target.GitRoot}"
             : "Not inside a Git repository";
         OnPropertyChanged(nameof(HasGitRepository));
+        GitChanges.SetWorkspace(target);
         ActiveSection = AppSection.Overview;
 
         RecentWorkspaces.Clear();
@@ -778,6 +808,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             StatusMessage = $"Indexing failed: {e.Message}";
             _indexingFailed = true;
+
+            // Git does not depend on the index, so the section still has a file-level
+            // answer to give even when there is nothing to map it onto.
+            GitChanges.SetIndex(null);
             Diagnostics.Add(new IndexDiagnostic(Core.Model.DiagnosticSeverity.Error, null, e.Message));
             RefreshDiagnosticCounts();
         }
@@ -818,6 +852,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         RefreshDiagnosticCounts();
         Graph.SetDatabase(_database);
+
+        // Re-read Git against the index that has just become current: a reindex can move
+        // every declaration's recorded span, and the changed set is derived from those.
+        GitChanges.SetIndex(_database);
 
         _allEndpoints.Clear();
         _allEndpoints.AddRange(_database.GetEndpoints().Select(endpoint => new EndpointViewModel(endpoint)));
@@ -1013,6 +1051,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void ClearWorkspace()
     {
         Graph.SetDatabase(null);
+        GitChanges.SetWorkspace(null);
         _database?.Dispose();
         _database = null;
 
