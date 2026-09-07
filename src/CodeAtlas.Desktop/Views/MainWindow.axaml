@@ -14,6 +14,33 @@
 
   <Window.Resources>
     <views:EnumEqualsConverter x:Key="SectionIs" />
+
+    <!-- Shared by every impacted-symbol list, which differ only in what they mean rather
+         than in how a row reads. The hop count travels with the row so a transitive
+         effect is never presented as though it were a direct one. -->
+    <DataTemplate x:Key="ImpactRowTemplate" x:DataType="vm:ImpactRowViewModel">
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
+        <Border Grid.Column="0" Classes="glyph" Classes.container="{Binding IsContainer}"
+                VerticalAlignment="Center">
+          <TextBlock Text="{Binding Glyph}" />
+        </Border>
+        <StackPanel Grid.Column="1" MinWidth="0">
+          <TextBlock Text="{Binding Display}" Classes="strong" TextTrimming="CharacterEllipsis" />
+          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+            <TextBlock Grid.Column="0" Text="{Binding Container}" Classes="dim"
+                       TextTrimming="CharacterEllipsis" />
+            <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
+                       TextTrimming="CharacterEllipsis" />
+          </Grid>
+        </StackPanel>
+        <TextBlock Grid.Column="2" Text="{Binding Kind}" Classes="dimmer"
+                   VerticalAlignment="Center" />
+        <Border Grid.Column="3" Classes="chip" VerticalAlignment="Center"
+                ToolTip.Tip="Shortest distance through the dependency graph">
+          <TextBlock Text="{Binding DistanceText}" />
+        </Border>
+      </Grid>
+    </DataTemplate>
   </Window.Resources>
 
   <DockPanel>
@@ -211,6 +238,17 @@
                          IsVisible="{Binding GitChanges.HasChangedFiles}"
                          Text="{Binding GitChanges.ChangedFileCount}" />
             </Grid>
+          </RadioButton>
+
+          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
+                       IsEnabled="{Binding HasWorkspace}"
+                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
+                                   Converter={StaticResource SectionIs},
+                                   ConverterParameter={x:Static vm:AppSection.Impact}}">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Path Classes="icon" Data="{DynamicResource Icon.Impact}" />
+              <TextBlock Text="Impact" VerticalAlignment="Center" />
+            </StackPanel>
           </RadioButton>
 
           <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
@@ -578,6 +616,10 @@
                         <Grid.ContextMenu>
                           <ContextMenu>
                             <MenuItem
+                                Header="Analyse impact"
+                                Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).AnalyzeImpactCommand}"
+                                CommandParameter="{Binding}" />
+                            <MenuItem
                                 Header="Open source"
                                 Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).OpenEndpointSourceCommand}"
                                 CommandParameter="{Binding}" />
@@ -661,6 +703,15 @@
                                   ToolTip.Tip="The table this entity is mapped to">
                             <TextBlock Text="{Binding Table}" Classes="mono" />
                           </Border>
+
+                          <Grid.ContextMenu>
+                            <ContextMenu>
+                              <MenuItem
+                                  Header="Analyse impact"
+                                  Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).AnalyzeImpactCommand}"
+                                  CommandParameter="{Binding}" />
+                            </ContextMenu>
+                          </Grid.ContextMenu>
                         </Grid>
                       </DataTemplate>
                     </ListBox.ItemTemplate>
@@ -919,6 +970,15 @@
                                     Classes.warning="{Binding IsRemoved}">
                               <TextBlock Text="{Binding ChangeLabel}" />
                             </Border>
+
+                            <Grid.ContextMenu>
+                              <ContextMenu>
+                                <MenuItem
+                                    Header="Analyse impact"
+                                    Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).AnalyzeImpactCommand}"
+                                    CommandParameter="{Binding}" />
+                              </ContextMenu>
+                            </Grid.ContextMenu>
                           </Grid>
                         </DataTemplate>
                       </ListBox.ItemTemplate>
@@ -1041,6 +1101,280 @@
                   </Grid>
                 </Border>
               </Panel>
+            </Panel>
+          </Grid>
+
+          <!-- Impact -->
+          <Grid RowDefinitions="Auto,*" RowSpacing="16"
+                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
+                            ConverterParameter={x:Static vm:AppSection.Impact}}">
+
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16"
+                  DataContext="{Binding Impact}" x:DataType="vm:ImpactViewModel">
+              <StackPanel Grid.Column="0" Spacing="4" MinWidth="0">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <TextBlock Classes="title" Text="{Binding RootTitle}"
+                             TextTrimming="CharacterEllipsis" />
+                  <Border Classes="chip error" VerticalAlignment="Center"
+                          IsVisible="{Binding IsHighRisk}"
+                          ToolTip.Tip="{Binding RiskRationale}">
+                    <TextBlock Text="{Binding RiskLevelText}" />
+                  </Border>
+                  <Border Classes="chip warning" VerticalAlignment="Center"
+                          IsVisible="{Binding IsModerateRisk}"
+                          ToolTip.Tip="{Binding RiskRationale}">
+                    <TextBlock Text="{Binding RiskLevelText}" />
+                  </Border>
+                  <Border Classes="chip warning" VerticalAlignment="Center"
+                          IsVisible="{Binding IsTruncated}"
+                          ToolTip.Tip="A cap stopped the walk, so the real blast radius is larger than this. Nothing shown is wrong; there is more of it.">
+                    <TextBlock Text="Partial" />
+                  </Border>
+                </StackPanel>
+                <TextBlock Classes="meta mono" Text="{Binding RootSubtitle}"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Classes="dimmer" Text="{Binding ReachText}"
+                           IsVisible="{Binding HasReport}" />
+              </StackPanel>
+
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12"
+                          VerticalAlignment="Center">
+                <ProgressBar Width="110" IsIndeterminate="True" VerticalAlignment="Center"
+                             IsVisible="{Binding IsLoading}" />
+                <TextBox Theme="{DynamicResource SearchBoxTheme}"
+                         Width="180" VerticalAlignment="Center"
+                         PlaceholderText="Filter indirect"
+                         IsEnabled="{Binding HasReport}"
+                         Text="{Binding Filter, Mode=TwoWay}" />
+              </StackPanel>
+            </Grid>
+
+            <Panel Grid.Row="1" DataContext="{Binding Impact}" x:DataType="vm:ImpactViewModel">
+
+              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                          IsVisible="{Binding !HasReport}">
+                <TextBlock Text="Nothing analysed yet" Classes="section" HorizontalAlignment="Center" />
+                <TextBlock Classes="meta" HorizontalAlignment="Center"
+                           TextAlignment="Center" TextWrapping="Wrap" MaxWidth="440"
+                           Text="Select a symbol, an endpoint, an entity or a changed symbol and choose Impact to see what a change to it can reach." />
+              </StackPanel>
+
+              <ScrollViewer IsVisible="{Binding HasReport}">
+                <StackPanel Spacing="16">
+
+                  <!-- The answer, before any of it is opened. -->
+                  <Border Classes="card" Padding="14">
+                    <StackPanel Spacing="10">
+                      <TextBlock Classes="overline" Text="What this change can affect" />
+                      <ItemsControl ItemsSource="{Binding Summary}">
+                        <ItemsControl.ItemsPanel>
+                          <ItemsPanelTemplate>
+                            <WrapPanel />
+                          </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ImpactCountViewModel">
+                            <Border Classes="tile" Margin="0,0,10,0" Padding="14,10" MinWidth="150">
+                              <StackPanel>
+                                <TextBlock Text="{Binding Count}" Classes="value"
+                                           Classes.dimmer="{Binding IsEmpty}" />
+                                <TextBlock Text="{Binding Label}" Classes="caption"
+                                           TextWrapping="Wrap" />
+                              </StackPanel>
+                            </Border>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </Border>
+
+                  <!-- Why it reads the way it does. Every property, present or not, with
+                       the fact behind it: a level without its evidence is just a verdict. -->
+                  <Border Classes="card" Padding="14">
+                    <StackPanel Spacing="10">
+                      <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Classes="overline" Text="Risk surface" />
+                        <TextBlock Grid.Column="1" Classes="dimmer" Text="{Binding RiskRationale}" />
+                      </Grid>
+                      <ItemsControl ItemsSource="{Binding RiskSignals}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:RiskSignalViewModel">
+                            <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="0,4">
+                              <Border Grid.Column="0" Classes="glyph"
+                                      Classes.container="{Binding IsPresent}"
+                                      VerticalAlignment="Top">
+                                <TextBlock Text="{Binding Marker}" />
+                              </Border>
+                              <TextBlock Grid.Column="1" Text="{Binding Title}"
+                                         Classes="strong" MinWidth="170"
+                                         Classes.dimmer="{Binding !IsPresent}" />
+                              <TextBlock Grid.Column="2" Text="{Binding Evidence}" Classes="meta"
+                                         TextWrapping="Wrap" />
+                            </Grid>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </Border>
+
+                  <!-- Direct effects, kept apart from transitive ones. -->
+                  <Border Classes="card" Padding="10" IsVisible="{Binding HasDirectCallers}">
+                    <StackPanel Spacing="8">
+                      <TextBlock Classes="overline" Text="Direct callers" />
+                      <ListBox ItemsSource="{Binding DirectCallers}"
+                               SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+                               Theme="{DynamicResource ResultListTheme}"
+                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                               MaxHeight="240"
+                               ItemTemplate="{StaticResource ImpactRowTemplate}" />
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="card" Padding="10" IsVisible="{Binding HasIndirectCallers}">
+                    <StackPanel Spacing="8">
+                      <TextBlock Classes="overline" Text="Indirect callers" />
+                      <TextBlock Classes="dimmer" TextWrapping="Wrap"
+                                 Text="Reached through at least one other call. The hop count is the shortest path, so the nearest are listed first." />
+                      <ListBox ItemsSource="{Binding IndirectCallers}"
+                               SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+                               Theme="{DynamicResource ResultListTheme}"
+                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                               MaxHeight="320"
+                               ItemTemplate="{StaticResource ImpactRowTemplate}" />
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="card" Padding="10" IsVisible="{Binding HasImplementations}">
+                    <StackPanel Spacing="8">
+                      <TextBlock Classes="overline" Text="Implementations and derived types" />
+                      <TextBlock Classes="dimmer" TextWrapping="Wrap"
+                                 Text="These would have to change with it, rather than merely being affected by it." />
+                      <ListBox ItemsSource="{Binding Implementations}"
+                               SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+                               Theme="{DynamicResource ResultListTheme}"
+                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                               MaxHeight="200"
+                               ItemTemplate="{StaticResource ImpactRowTemplate}" />
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="card" Padding="10" IsVisible="{Binding HasEndpoints}">
+                    <StackPanel Spacing="8">
+                      <TextBlock Classes="overline" Text="Potentially affected endpoints" />
+                      <ListBox ItemsSource="{Binding Endpoints}"
+                               SelectedItem="{Binding SelectedEndpoint, Mode=TwoWay}"
+                               Theme="{DynamicResource ResultListTheme}"
+                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                               MaxHeight="240">
+                        <ListBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:EndpointViewModel">
+                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                              <Border Grid.Column="0" Classes="verb">
+                                <TextBlock Text="{Binding HttpMethod}" />
+                              </Border>
+                              <StackPanel Grid.Column="1" MinWidth="0">
+                                <TextBlock Text="{Binding Route}" Classes="mono strong"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Handler}" Classes="dim"
+                                           TextTrimming="CharacterEllipsis" />
+                              </StackPanel>
+                              <Border Grid.Column="2" Classes="chip" VerticalAlignment="Center"
+                                      Classes.warning="{Binding IsAnonymous}"
+                                      IsVisible="{Binding HasAuthorization}">
+                                <TextBlock Text="{Binding Authorization}" />
+                              </Border>
+                            </Grid>
+                          </DataTemplate>
+                        </ListBox.ItemTemplate>
+                      </ListBox>
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="card" Padding="10" IsVisible="{Binding HasWorkers}">
+                    <StackPanel Spacing="8">
+                      <TextBlock Classes="overline" Text="Affected background services" />
+                      <TextBlock Classes="dimmer" TextWrapping="Wrap"
+                                 Text="Found by the hosting type they derive from. A change reaching one of these is invisible in any endpoint list." />
+                      <ListBox ItemsSource="{Binding Workers}"
+                               SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+                               Theme="{DynamicResource ResultListTheme}"
+                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                               MaxHeight="180"
+                               ItemTemplate="{StaticResource ImpactRowTemplate}" />
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="card" Padding="10" IsVisible="{Binding HasEntities}">
+                    <StackPanel Spacing="8">
+                      <TextBlock Classes="overline" Text="Database entities" />
+                      <ItemsControl ItemsSource="{Binding Entities}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:EntityRowViewModel">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,3">
+                              <StackPanel Grid.Column="0" MinWidth="0">
+                                <TextBlock Text="{Binding Entity}" Classes="strong"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Context}" Classes="dim"
+                                           TextTrimming="CharacterEllipsis" />
+                              </StackPanel>
+                              <Border Grid.Column="1" Classes="chip" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Table}" Classes="mono" />
+                              </Border>
+                            </Grid>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="card" Padding="10" IsVisible="{Binding HasExternalIntegrations}">
+                    <StackPanel Spacing="8">
+                      <TextBlock Classes="overline" Text="External integrations" />
+                      <ItemsControl ItemsSource="{Binding ExternalIntegrations}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ExternalRowViewModel">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,3">
+                              <StackPanel Grid.Column="0" MinWidth="0">
+                                <TextBlock Text="{Binding Resource}" Classes="strong"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Consumer}" Classes="dim"
+                                           TextTrimming="CharacterEllipsis" />
+                              </StackPanel>
+                              <Border Grid.Column="1" Classes="chip" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding TechnologyLabel}" />
+                              </Border>
+                            </Grid>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="card" Padding="10" IsVisible="{Binding HasConfiguration}">
+                    <StackPanel Spacing="8">
+                      <TextBlock Classes="overline" Text="Configuration dependencies" />
+                      <ItemsControl ItemsSource="{Binding Configuration}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ConfigurationRowViewModel">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,3">
+                              <StackPanel Grid.Column="0" MinWidth="0">
+                                <TextBlock Text="{Binding Key}" Classes="mono strong"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Consumer}" Classes="dim"
+                                           TextTrimming="CharacterEllipsis" />
+                              </StackPanel>
+                              <Border Grid.Column="1" Classes="chip" VerticalAlignment="Center"
+                                      IsVisible="{Binding HasOptions}">
+                                <TextBlock Text="{Binding Options}" />
+                              </Border>
+                            </Grid>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+              </ScrollViewer>
             </Panel>
           </Grid>
 
@@ -1355,15 +1689,22 @@
                              ToolTip.Tip="{Binding Location}" />
                   <SelectableTextBlock Text="{Binding Location}" Classes="caption"
                                        TextWrapping="Wrap" />
-                  <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2,0,0">
+                  <WrapPanel Margin="0,2,0,0">
                     <Button Theme="{DynamicResource SecondaryButtonTheme}"
-                            Content="Open in editor"
+                            Content="Open in editor" Margin="0,0,8,4"
                             IsEnabled="{Binding CanOpenSource}"
                             Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).OpenSourceCommand}" />
                     <Button Theme="{DynamicResource SecondaryButtonTheme}"
-                            Content="Show in graph"
+                            Content="Show in graph" Margin="0,0,8,4"
                             Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).ShowInGraphCommand}" />
-                  </StackPanel>
+
+                    <!-- The starting point for a method, a type or an interface: whatever
+                         the details pane is currently showing. -->
+                    <Button Theme="{DynamicResource SecondaryButtonTheme}"
+                            Content="Impact" Margin="0,0,0,4"
+                            ToolTip.Tip="What a change to this symbol can affect"
+                            Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).AnalyzeImpactCommand}" />
+                  </WrapPanel>
                 </StackPanel>
 
                 <Border Classes="divider" />

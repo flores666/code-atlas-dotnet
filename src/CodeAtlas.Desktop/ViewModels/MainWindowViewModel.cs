@@ -84,6 +84,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         // A changed symbol is explored the way an endpoint or a resource is: show it, and
         // open the graph on it, because "what does this change touch" is a graph question.
+        // Every starting point the spec names reduces to a symbol id, so there is one
+        // command rather than one entry point per kind: a method or type from the details
+        // pane, an endpoint's handler, an entity, or a changed symbol.
+        AnalyzeImpactCommand = new RelayCommand(
+            parameter => AnalyzeImpact(ImpactTarget(parameter)),
+            parameter => ImpactTarget(parameter) is not null);
+
+        Impact.SymbolSelected += id => _ = ShowDetailsAsync(id);
+        Impact.EndpointSelected += endpoint => _ = ShowEndpointAsync(new EndpointViewModel(endpoint));
+
         GitChanges.SymbolSelected += id => _ = ShowChangedSymbolAsync(id);
         GitChanges.ChangedSetUpdated += Graph.SetChangedSymbols;
         GitChanges.StatusReported += message => StatusMessage = message;
@@ -133,9 +143,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _activeSection, value))
             {
-                // The graph only queries while it is on screen; selecting symbols in the
-                // tree or in search results costs nothing until the reader looks at it.
+                // The graph and the impact walk only query while they are on screen;
+                // selecting symbols in the tree or in search results costs nothing until
+                // the reader looks at them.
                 Graph.IsActive = value == AppSection.Graph;
+                Impact.IsActive = value == AppSection.Impact;
             }
         }
     }
@@ -145,6 +157,45 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     /// <summary>How the working tree differs from its Git baseline.</summary>
     public GitChangesViewModel GitChanges { get; } = new();
+
+    /// <summary>What a change to the selected symbol can affect.</summary>
+    public ImpactViewModel Impact { get; } = new();
+
+    /// <summary>Runs impact analysis on a symbol and shows the result.</summary>
+    public RelayCommand AnalyzeImpactCommand { get; }
+
+    /// <summary>
+    /// The symbol an impact request is about, whatever kind of row it came from.
+    /// </summary>
+    /// <remarks>
+    /// A null parameter means "whatever is selected", which is what the details pane's own
+    /// button passes. An endpoint is analysed through its handler, falling back to the
+    /// controller that declares it, because that is the symbol its behaviour lives on.
+    /// </remarks>
+    private long? ImpactTarget(object? parameter) => parameter switch
+    {
+        EndpointViewModel endpoint =>
+            endpoint.Endpoint.HandlerSymbolId ?? endpoint.Endpoint.DeclaringTypeSymbolId,
+        ChangedSymbolViewModel changed => changed.SymbolId,
+        EntityRowViewModel entity => entity.SymbolId,
+        ExternalRowViewModel external => external.SymbolId,
+        ConfigurationRowViewModel configuration => configuration.SymbolId,
+        SymbolLink link => link.SymbolId,
+        long id => id,
+        _ => Details?.Symbol.Id,
+    };
+
+    private void AnalyzeImpact(long? symbolId)
+    {
+        if (symbolId is not { } id)
+        {
+            StatusMessage = "That row has no declaration in this solution to analyse.";
+            return;
+        }
+
+        Impact.Analyze(id);
+        ActiveSection = AppSection.Impact;
+    }
 
     /// <summary>
     /// Opens a changed symbol: its details, and the graph rooted on it.
@@ -678,6 +729,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(HasDetails));
                 OpenSourceCommand.RaiseCanExecuteChanged();
                 ShowInGraphCommand.RaiseCanExecuteChanged();
+                AnalyzeImpactCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -852,6 +904,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         RefreshDiagnosticCounts();
         Graph.SetDatabase(_database);
+
+        Impact.SetDatabase(_database);
 
         // Re-read Git against the index that has just become current: a reindex can move
         // every declaration's recorded span, and the changed set is derived from those.
@@ -1051,6 +1105,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void ClearWorkspace()
     {
         Graph.SetDatabase(null);
+        Impact.SetDatabase(null);
         GitChanges.SetWorkspace(null);
         _database?.Dispose();
         _database = null;

@@ -940,6 +940,277 @@ public sealed class SymbolIndexDatabase : IDisposable
         return ReadLinks(command);
     }
 
+    // ---- impact primitives --------------------------------------------------
+    //
+    // One hop each, exactly like the graph primitives above, because ImpactAnalyzer owns
+    // how far a closure reaches. The fact queries take the closure as a set, so the walk
+    // is done once and its properties are read against it rather than re-derived.
+
+    /// <summary>
+    /// The symbols that depend on any of <paramref name="ids"/>: one hop backwards along
+    /// the given kinds.
+    /// </summary>
+    /// <remarks>
+    /// Backwards is what makes this an impact question rather than a dependency one. An
+    /// edge is stored from the thing that depends to the thing depended upon, so reversing
+    /// it answers "who would have to change with this".
+    /// </remarks>
+    public IReadOnlyList<long> GetDependents(
+        IReadOnlyCollection<long> ids,
+        IReadOnlyCollection<RelationKind> kinds)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(kinds);
+
+        if (ids.Count == 0 || kinds.Count == 0)
+        {
+            return [];
+        }
+
+        return Read(() =>
+        {
+            using var command = _connection.CreateCommand();
+            var idList = IdList(command, ids);
+            var kindList = KindList(command, kinds);
+
+            command.CommandText = $"""
+                SELECT DISTINCT r.source_symbol_id
+                FROM relations r
+                WHERE r.target_symbol_id IN {idList}
+                  AND r.kind IN {kindList}
+                  AND r.source_symbol_id IS NOT NULL
+                """;
+
+            using var reader = command.ExecuteReader();
+            var results = new List<long>();
+            while (reader.Read())
+            {
+                results.Add(reader.GetInt64(0));
+            }
+
+            return results;
+        });
+    }
+
+    /// <summary>
+    /// The symbols any of <paramref name="ids"/> depend on: one hop forwards along the
+    /// given kinds.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart of <see cref="GetDependents"/>, and needed for the same question.
+    /// A boundary or a configuration read is recorded against the component that performs
+    /// it, which sits <em>below</em> a change rather than above it, so a purely backwards
+    /// closure cannot see what the affected code actually talks to.
+    /// </remarks>
+    public IReadOnlyList<long> GetDependencies(
+        IReadOnlyCollection<long> ids,
+        IReadOnlyCollection<RelationKind> kinds)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(kinds);
+
+        if (ids.Count == 0 || kinds.Count == 0)
+        {
+            return [];
+        }
+
+        return Read(() =>
+        {
+            using var command = _connection.CreateCommand();
+            var idList = IdList(command, ids);
+            var kindList = KindList(command, kinds);
+
+            command.CommandText = $"""
+                SELECT DISTINCT r.target_symbol_id
+                FROM relations r
+                WHERE r.source_symbol_id IN {idList}
+                  AND r.kind IN {kindList}
+                  AND r.target_symbol_id IS NOT NULL
+                """;
+
+            using var reader = command.ExecuteReader();
+            var results = new List<long>();
+            while (reader.Read())
+            {
+                results.Add(reader.GetInt64(0));
+            }
+
+            return results;
+        });
+    }
+
+    /// <summary>Endpoints whose handler, declaring type or inline dependency is in the set.</summary>
+    public IReadOnlyList<HttpEndpoint> GetEndpointsFor(IReadOnlyCollection<long> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        return Read(() =>
+        {
+            using var command = _connection.CreateCommand();
+            var idList = IdList(command, ids);
+
+            command.CommandText = $"""
+                {SelectEndpoint}
+                WHERE e.handler_symbol_id IN {idList}
+                   OR e.declaring_id IN {idList}
+                   OR e.id IN (SELECT d.endpoint_id FROM endpoint_dependencies d
+                               WHERE d.symbol_id IN {idList})
+                ORDER BY e.route COLLATE NOCASE, e.http_method, e.id
+                """;
+
+            return ReadEndpoints(command);
+        });
+    }
+
+    /// <summary>
+    /// Entities the set reaches: those it reads or writes, and those it declares or maps.
+    /// </summary>
+    public IReadOnlyList<EntityMapping> GetEntitiesFor(IReadOnlyCollection<long> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        return Read(() =>
+        {
+            using var command = _connection.CreateCommand();
+            var idList = IdList(command, ids);
+
+            command.CommandText = $"""
+                {SelectEntity}
+                WHERE e.entity_symbol_id IN (
+                          SELECT r.target_symbol_id FROM relations r
+                          WHERE r.source_symbol_id IN {idList}
+                            AND r.kind IN ('ReadsEntity', 'CreatesEntity', 'ModifiesEntity',
+                                           'DeletesEntity', 'DeclaresEntity', 'ConfiguresEntity'))
+                   OR e.entity_symbol_id IN {idList}
+                   OR e.context_symbol_id IN {idList}
+                ORDER BY e.entity_display COLLATE NOCASE, e.id
+                """;
+
+            return ReadEntities(command);
+        });
+    }
+
+    /// <summary>Infrastructure boundaries the set sits on.</summary>
+    public IReadOnlyList<ExternalDependency> GetExternalDependenciesFor(IReadOnlyCollection<long> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        return Read(() =>
+        {
+            using var command = _connection.CreateCommand();
+            var idList = IdList(command, ids);
+
+            command.CommandText = $"""
+                {SelectExternal}
+                WHERE x.consumer_symbol_id IN {idList}
+                   OR x.client_symbol_id IN {idList}
+                ORDER BY x.technology, x.consumer_display COLLATE NOCASE, x.id
+                """;
+
+            return ReadExternal(command);
+        });
+    }
+
+    /// <summary>Configuration the set reads, and options types within it.</summary>
+    public IReadOnlyList<ConfigurationUsage> GetConfigurationFor(IReadOnlyCollection<long> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        return Read(() =>
+        {
+            using var command = _connection.CreateCommand();
+            var idList = IdList(command, ids);
+
+            command.CommandText = $"""
+                {SelectConfiguration}
+                WHERE c.consumer_symbol_id IN {idList}
+                   OR c.options_symbol_id IN {idList}
+                ORDER BY c.config_key COLLATE NOCASE, c.options_display COLLATE NOCASE, c.id
+                """;
+
+            return ReadConfiguration(command);
+        });
+    }
+
+    /// <summary>
+    /// The subset that are background services, recognised by the hosting types they
+    /// derive from or implement.
+    /// </summary>
+    /// <remarks>
+    /// Matched on the fully qualified name the compiler bound, the way every other
+    /// framework fact is, so a class merely called <c>Worker</c> is not mistaken for one
+    /// and a real one that is not is still found. The relation keeps its target name even
+    /// though <c>BackgroundService</c> is outside the solution, which is what makes this
+    /// answerable from the index at all.
+    /// </remarks>
+    public IReadOnlyList<long> GetWorkersAmong(IReadOnlyCollection<long> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        return Read(() =>
+        {
+            using var command = _connection.CreateCommand();
+            var idList = IdList(command, ids);
+            var hostingList = ParameterList(command, "h", HostingTypes.Select(name => (object)name));
+
+            // The owning type is what derives from BackgroundService, so an impacted
+            // member counts through its container.
+            command.CommandText = $"""
+                SELECT DISTINCT s.id
+                FROM symbols s
+                LEFT JOIN symbols owner ON owner.fqn = s.container_fqn
+                WHERE s.id IN {idList}
+                  AND EXISTS (
+                      SELECT 1 FROM relations r
+                      WHERE r.source_symbol_id IN (s.id, owner.id)
+                        AND r.kind IN ('Inherits', 'Implements')
+                        AND r.target_fqn IN {hostingList})
+                """;
+
+            using var reader = command.ExecuteReader();
+            var results = new List<long>();
+            while (reader.Read())
+            {
+                results.Add(reader.GetInt64(0));
+            }
+
+            return results;
+        });
+    }
+
+    /// <summary>The framework types that make a class a hosted background service.</summary>
+    private static readonly string[] HostingTypes =
+    [
+        "Microsoft.Extensions.Hosting.BackgroundService",
+        "Microsoft.Extensions.Hosting.IHostedService",
+        "Microsoft.Extensions.Hosting.IHostedLifecycleService",
+    ];
+
     /// <summary>
     /// A short infrastructure label per symbol, for the graph to badge its nodes with:
     /// the table an entity maps to, the technology a boundary type talks to, or the fact
