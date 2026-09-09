@@ -71,6 +71,7 @@ public sealed class IndexingService
 
             var projectId = session.AddProject(data.Project);
             session.AddSymbols(projectId, data.Symbols);
+            session.AddProjectReferences(projectId, data.ProjectReferences);
             session.AddRelations(projectId, data.Relations);
             session.AddRegistrations(data.Registrations);
             session.AddEndpoints(projectId, data.Endpoints);

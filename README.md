@@ -4,14 +4,15 @@ A local-first, read-only semantic explorer for C#/.NET solutions. It loads a sol
 Roslyn, indexes the declarations and exact semantic relations into a local SQLite file, and
 lets you search, inspect and map them offline.
 
-**MVP 3** — the semantic code map, how an ASP.NET Core application is composed, and where
-it meets everything outside itself. Declarations, calls, references, implementations,
-inheritance and type dependencies; a bounded graph of the neighbourhood around any symbol;
-DI registrations and the HTTP endpoints they are wired behind; the EF Core model and what
-reads and writes it; configuration keys and the options types they bind; and the
-infrastructure boundaries the application crosses. No runtime tracing, Kubernetes
-analysis, message-broker topology, Git intelligence, AI, embeddings, impact scoring or
-context export.
+**MVP 6** — the semantic code map, how an ASP.NET Core application is composed, where it
+meets everything outside itself, and which tests hold it in place. Declarations, calls,
+references, implementations, inheritance and type dependencies; a bounded graph of the
+neighbourhood around any symbol; DI registrations and the HTTP endpoints they are wired
+behind; the EF Core model and what reads and writes it; configuration keys and the options
+types they bind; the infrastructure boundaries the application crosses; and the xUnit,
+NUnit and MSTest tests that exercise any symbol — including the ones a working-tree diff
+has just changed. No runtime tracing or coverage, Kubernetes analysis, message-broker
+topology, AI, embeddings, impact scoring or context export.
 
 ## Running
 
@@ -52,8 +53,24 @@ The graph filters by the same three cuts — **Database**, **Configuration**, **
 services** — alongside the existing ones, and a node standing on infrastructure is badged
 with the table it maps to or the technology it talks to.
 
+Any symbol lists its **Related tests** in the details pane, and **Changes** reads the
+working tree against `HEAD` to say what an edit means: every declaration the diff touched,
+the tests over each one, and a warning for a changed method nothing was found to cover.
+
 ```
-dotnet test              # 134 tests, including a real end-to-end indexing run
+UserService.Get(int id)             src/Shop/UserService.cs:19        2 tests
+    exact     UserServiceTests.Get_returns_the_user()   calls Get(int id)
+    exact     UserServiceTests.Archive_is_quiet()       constructs UserService
+
+ReportService.Total()               src/Shop/ReportService.cs:5       1 probable
+    probable  ReportServiceTests.Totals_are_produced()  named after ReportService, in a
+                                                        project that depends on it
+
+PricingEngine.Quote(decimal net)    src/Shop/Legacy/Pricing.cs:5      no tests found
+```
+
+```
+dotnet test              # 163 tests, including a real end-to-end indexing run
 ```
 
 Requires the .NET 10 SDK at run time: Roslyn loads projects through the SDK's MSBuild.
@@ -199,6 +216,37 @@ resource seeds on what names it, widened to the type that names it, and then fol
 of and it is short and narrow; following calls backwards would put half the solution in the
 answer the first time it crossed a hot method.
 
+**A test is an attribute, not a name.** A method is a test because the compiler bound one
+of `Xunit`, `NUnit.Framework` or `Microsoft.VisualStudio.TestTools.UnitTesting`'s attributes
+to it — the same rule that recognises a `DbSet` or an `IServiceCollection`. Attributes are
+already indexed against every symbol, so detecting tests needs no collector, no table and no
+second pass: a fixture is a type that contains one, and a test project is a project that
+declares one.
+
+**"Exact" and "probable" are two different claims, and the ladder keeps them apart.** A test
+that calls the symbol, a fixture that constructs the class under test, and a fixture member
+that names the symbol are edges the compiler recorded, so they are exact. A fixture named
+after the type, corroborated or not by a project reference, and a fixture sitting in the
+type's namespace are guesses, and are never dressed up as anything else. A fixture's own
+members count towards the exact tiers because a test class builds its subject once — in a
+field, a constructor or a setup method — and asserts on it from every test.
+
+**The weakest signal is a fallback, not an addition.** Namespace and directory similarity
+would attach every fixture in a mirrored namespace to every type in it, so it is dropped the
+moment anything stronger is found. Nothing follows calls transitively either, for the reason
+"reached from" does not: one hot method would put the whole suite in every answer.
+
+**A diff is read into the index by span, and only the innermost declaration changed.** Every
+symbol stores where its declaration ends as well as where it begins, and each one owns the
+part of that span its own members do not claim. A changed line in a body therefore reports
+the method, a changed attribute or base list reports the type, and neither reports the other.
+A changed file the index has never seen is reported as unmapped rather than as untested:
+"no tests" would be a statement about CodeAtlas rather than about the code.
+
+**Git is asked for the diff; nothing else is asked of it.** One read-only `git diff
+--unified=0`, run in the working tree. Zero context lines matter: a hunk with context would
+drag the neighbouring declarations into the answer.
+
 **`record struct` is indexed as `Record`,** matching the keyword that was written rather than
 Roslyn's `TypeKind.Struct`.
 
@@ -231,5 +279,6 @@ CODEATLAS_EDITOR='rider --line {line} {file}'
 
 ## The repository is never written to
 
-CodeAtlas opens the analysed solution read-only, runs no Git commands, and writes only to its
-own cache directory. Git detection is a walk up the directory tree looking for `.git`.
+CodeAtlas opens the analysed solution read-only and writes only to its own cache directory.
+Git detection is a walk up the directory tree looking for `.git`, and the only Git command
+ever run is `git diff`, which reads.

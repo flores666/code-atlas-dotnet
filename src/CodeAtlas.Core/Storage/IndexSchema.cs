@@ -10,7 +10,7 @@ namespace CodeAtlas.Core.Storage;
 /// </remarks>
 public static class IndexSchema
 {
-    public const int Version = 5;
+    public const int Version = 6;
 
     public const string SchemaVersionKey = "schema_version";
     public const string SourcePathKey = "source_path";
@@ -41,8 +41,17 @@ public static class IndexSchema
             container_fqn TEXT,
             file_path     TEXT,
             line          INTEGER,
+            end_line      INTEGER,
             start_column  INTEGER,
             accessibility TEXT
+        );
+
+        -- Which projects a project was built against. Names rather than ids, because a
+        -- reference may point at a project that has not been written yet; a project that
+        -- never loads simply keeps its name and matches nothing.
+        CREATE TABLE project_references (
+            project_id  INTEGER NOT NULL REFERENCES projects(id),
+            target_name TEXT    NOT NULL
         );
 
         CREATE TABLE symbol_attributes (
@@ -190,8 +199,12 @@ public static class IndexSchema
         CREATE INDEX ix_symbols_fqn       ON symbols(fqn, project_id);
         CREATE INDEX ix_symbols_project   ON symbols(project_id, namespace);
         CREATE INDEX ix_symbols_container ON symbols(container_fqn);
+        CREATE INDEX ix_symbols_file      ON symbols(file_path);
 
         CREATE INDEX        ix_attributes_symbol ON symbol_attributes(symbol_id);
+        -- Test methods are found by their attribute, so this table is read from both ends.
+        CREATE INDEX        ix_attributes_fqn    ON symbol_attributes(attribute_fqn);
+        CREATE INDEX        ix_project_refs      ON project_references(project_id);
         CREATE UNIQUE INDEX ux_relations_edge    ON relations(source_symbol_id, kind, target_fqn);
         CREATE INDEX        ix_relations_target  ON relations(target_symbol_id, kind);
         CREATE INDEX        ix_relations_edge_id ON relations(source_symbol_id, target_symbol_id);

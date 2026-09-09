@@ -67,6 +67,12 @@ public sealed class SymbolCollector
             AssemblyName = project.AssemblyName,
         };
 
+        var references = project.ProjectReferences
+            .Select(reference => project.Solution.GetProject(reference.ProjectId)?.Name)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
         Compilation? compilation;
         try
         {
@@ -117,6 +123,7 @@ public sealed class SymbolCollector
             collector._relations,
             collector._diagnostics)
         {
+            ProjectReferences = references,
             Registrations = collector._registrations.Registrations,
             Endpoints = collector._endpoints.Endpoints,
             Entities = collector._persistence.Entities,
@@ -349,7 +356,7 @@ public sealed class SymbolCollector
     private string AddSymbol(ISymbol symbol, IndexedSymbolKind kind)
     {
         var fullyQualifiedName = SymbolNaming.FullyQualifiedName(symbol);
-        var (path, line, column) = LocationOf(symbol);
+        var (path, line, column, endLine) = LocationOf(symbol);
 
         _symbols.Add(new IndexedSymbol
         {
@@ -365,6 +372,7 @@ public sealed class SymbolCollector
             FilePath = path,
             Line = line,
             Column = column,
+            EndLine = endLine,
             Accessibility = kind is IndexedSymbolKind.Namespace
                 ? null
                 : symbol.DeclaredAccessibility.ToString(),
@@ -421,15 +429,34 @@ public sealed class SymbolCollector
 
     private static bool IsInSource(ISymbol symbol) => symbol.Locations.Any(l => l.IsInSource);
 
-    private static (string? Path, int? Line, int? Column) LocationOf(ISymbol symbol)
+    /// <summary>
+    /// Where a declaration starts, and where it ends.
+    /// </summary>
+    /// <remarks>
+    /// The start is the identifier, which is what an editor should open on. The end comes
+    /// from the declaration syntax in that same file, so it covers the body: a symbol's
+    /// span is what a diff hunk is matched against, and a method whose span stopped at its
+    /// name would never be reported as changed. A partial type contributes several
+    /// declarations, and the one holding the identifier is the one measured.
+    /// </remarks>
+    private static (string? Path, int? Line, int? Column, int? EndLine) LocationOf(ISymbol symbol)
     {
         if (symbol.Locations.FirstOrDefault(l => l.IsInSource) is not { } location)
         {
-            return (null, null, null);
+            return (null, null, null, null);
         }
 
         var span = location.GetLineSpan();
-        return (span.Path, span.StartLinePosition.Line + 1, span.StartLinePosition.Character + 1);
+        var start = span.StartLinePosition.Line + 1;
+
+        var declaration = symbol.DeclaringSyntaxReferences
+            .FirstOrDefault(reference => reference.Span.Contains(location.SourceSpan));
+
+        var end = declaration is null
+            ? start
+            : declaration.SyntaxTree.GetLineSpan(declaration.Span).EndLinePosition.Line + 1;
+
+        return (span.Path, start, span.StartLinePosition.Character + 1, Math.Max(start, end));
     }
 
     // ---- calls and references -----------------------------------------------

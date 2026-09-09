@@ -4,6 +4,12 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace CodeAtlas.Core.Tests;
 
+/// <summary>One project of an in-memory solution: its documents, and what it is built against.</summary>
+internal sealed record TestProjectSpec(
+    string Name,
+    IReadOnlyList<(string FileName, string Source)> Documents,
+    IReadOnlyList<string> References);
+
 /// <summary>
 /// Builds in-memory Roslyn projects so the analysis layer can be tested without
 /// MSBuild, restores or files on disk.
@@ -19,30 +25,47 @@ internal static class TestProjectFactory
         .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
         .ToList();
 
-    public static Project Create(string name, params (string FileName, string Source)[] documents)
+    public static Project Create(string name, params (string FileName, string Source)[] documents) =>
+        CreateSolution(SourceRoot, new TestProjectSpec(name, documents, []))[0];
+
+    /// <summary>
+    /// Several projects in one solution, each able to reference the ones named before it.
+    /// </summary>
+    /// <param name="sourceRoot">
+    /// What document paths are rooted at. A test that reads its files back — a diff against
+    /// a real working tree — passes that tree; the rest pass nothing real.
+    /// </param>
+    public static IReadOnlyList<Project> CreateSolution(string sourceRoot, params TestProjectSpec[] projects)
     {
         var workspace = new AdhocWorkspace();
-        var projectId = ProjectId.CreateNewId();
+        var ids = projects.ToDictionary(
+            project => project.Name, _ => ProjectId.CreateNewId(), StringComparer.Ordinal);
 
-        var project = workspace.AddProject(ProjectInfo.Create(
-            projectId,
-            VersionStamp.Default,
-            name,
-            assemblyName: name,
-            LanguageNames.CSharp,
-            compilationOptions: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary),
-            parseOptions: new CSharpParseOptions(LanguageVersion.Latest),
-            metadataReferences: RuntimeReferences));
-
-        foreach (var (fileName, source) in documents)
+        foreach (var project in projects)
         {
-            workspace.AddDocument(DocumentInfo.Create(
-                DocumentId.CreateNewId(projectId),
-                fileName,
-                loader: TextLoader.From(TextAndVersion.Create(SourceText.From(source), VersionStamp.Default)),
-                filePath: Path.Combine(SourceRoot, fileName)));
+            var projectId = ids[project.Name];
+
+            workspace.AddProject(ProjectInfo.Create(
+                projectId,
+                VersionStamp.Default,
+                project.Name,
+                assemblyName: project.Name,
+                LanguageNames.CSharp,
+                compilationOptions: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary),
+                parseOptions: new CSharpParseOptions(LanguageVersion.Latest),
+                metadataReferences: RuntimeReferences,
+                projectReferences: project.References.Select(name => new ProjectReference(ids[name]))));
+
+            foreach (var (fileName, source) in project.Documents)
+            {
+                workspace.AddDocument(DocumentInfo.Create(
+                    DocumentId.CreateNewId(projectId),
+                    fileName,
+                    loader: TextLoader.From(TextAndVersion.Create(SourceText.From(source), VersionStamp.Default)),
+                    filePath: Path.Combine(sourceRoot, fileName)));
+            }
         }
 
-        return workspace.CurrentSolution.GetProject(projectId)!;
+        return [.. projects.Select(project => workspace.CurrentSolution.GetProject(ids[project.Name])!)];
     }
 }

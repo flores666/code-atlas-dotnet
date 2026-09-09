@@ -21,6 +21,13 @@ public sealed record ProjectIndexData(
     IReadOnlyList<PendingRelation> Relations,
     IReadOnlyList<IndexDiagnostic> Diagnostics)
 {
+    /// <summary>
+    /// The projects this one was built against, by name. What a test project can see is
+    /// the difference between a fixture named after a type and one that could actually
+    /// have exercised it.
+    /// </summary>
+    public IReadOnlyList<string> ProjectReferences { get; init; } = [];
+
     /// <summary>DI registrations found in this project's source.</summary>
     public IReadOnlyList<ServiceRegistration> Registrations { get; init; } = [];
 

@@ -35,6 +35,13 @@ public sealed record IndexedSymbol
     /// <summary>1-based column of the declaration.</summary>
     public int? Column { get; init; }
 
+    /// <summary>
+    /// 1-based last line of the whole declaration, body included, or <c>null</c> when it
+    /// has no source location. Together with <see cref="Line"/> this is the span a diff
+    /// hunk is matched against, which is what turns changed lines into changed symbols.
+    /// </summary>
+    public int? EndLine { get; init; }
+
     public string? Accessibility { get; init; }
 
     public IReadOnlyList<string> Attributes { get; init; } = [];

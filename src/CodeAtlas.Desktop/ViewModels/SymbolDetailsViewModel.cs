@@ -43,6 +43,7 @@ public sealed class SymbolDetailsViewModel
             .Select(dependency => new ExternalRowViewModel(dependency))
             .ToList();
         RelatedEndpoints = details.RelatedEndpoints.Select(endpoint => new EndpointViewModel(endpoint)).ToList();
+        RelatedTests = details.RelatedTests.Select(test => new RelatedTestViewModel(test)).ToList();
 
         Symbol = details.Symbol;
 
@@ -177,6 +178,15 @@ public sealed class SymbolDetailsViewModel
     public IReadOnlyList<EndpointViewModel> RelatedEndpoints { get; }
 
     public bool HasRelatedEndpoints => RelatedEndpoints.Count > 0;
+
+    /// <summary>
+    /// The tests that exercise this symbol, best evidence first. An exact entry is an edge
+    /// the compiler recorded; a probable one was read off names and project structure, and
+    /// carries the reason so it can be judged.
+    /// </summary>
+    public IReadOnlyList<RelatedTestViewModel> RelatedTests { get; }
+
+    public bool HasRelatedTests => RelatedTests.Count > 0;
 
     /// <summary>Names a capped list so a partial answer never reads as a complete one.</summary>
     private static string Truncatable(string title, int shown, int total) =>
