@@ -47,6 +47,9 @@ public sealed class EndpointCollector
         ["MapMethods"] = "ANY",
     };
 
+    /// <summary>The verb recorded for a route that is not restricted to one.</summary>
+    private const string AnyVerb = "ANY";
+
     private readonly List<HttpEndpoint> _endpoints = [];
     private readonly string? _projectName;
 
@@ -65,7 +68,7 @@ public sealed class EndpointCollector
             return;
         }
 
-        var prefixes = RouteTemplates(type, type, action: null);
+        var controllerTemplates = ControllerRouteTemplates(type);
         var controllerAuthorization = ReadAuthorization(type);
 
         foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
@@ -78,11 +81,42 @@ public sealed class EndpointCollector
             var authorization = controllerAuthorization.Combine(ReadAuthorization(method));
             var (path, line) = LocationOf(method);
 
-            foreach (var (verb, template) in HttpMappings(method))
+            // Finished per action, because a controller template may carry an {action}
+            // parameter that names the action it is being resolved for.
+            var prefixes = controllerTemplates
+                .Select(template => SubstituteTokens(template, type, method))
+                .ToList();
+
+            var mappings = HttpMappings(method);
+            if (mappings.Count == 0)
+            {
+                // An action with no verb attribute is reached through its controller's own
+                // template, and accepts every verb there — the ordinary shape of an MVC
+                // controller that carries [Route] and plain action methods. With no
+                // template anywhere the action is reachable only through the conventional
+                // route table, which is assembled at start-up and is not something to
+                // guess at, so nothing is claimed for it.
+                if (prefixes.Count == 0)
+                {
+                    continue;
+                }
+
+                mappings.Add((AnyVerb, null));
+            }
+
+            foreach (var (verb, template) in mappings)
             {
                 var suffixes = template is null
                     ? RouteTemplates(method, type, method)
                     : [SubstituteTokens(template, type, method)];
+
+                // A bare [HttpGet] on a controller with no route of its own is
+                // conventionally routed too, and listing it at "/" would name an endpoint
+                // that does not exist.
+                if (prefixes.Count == 0 && suffixes.Count == 0)
+                {
+                    continue;
+                }
 
                 foreach (var prefix in prefixes.Count > 0 ? prefixes : [string.Empty])
                 {
@@ -137,7 +171,40 @@ public sealed class EndpointCollector
             IsStatic: false,
             IsImplicitlyDeclared: false,
         }
-        && !HasAttribute(method, $"{Mvc}.NonActionAttribute");
+        && !HasAttribute(method, $"{Mvc}.NonActionAttribute")
+        && !IsFrameworkMember(method);
+
+    /// <summary>
+    /// True for a method belonging to the controller machinery rather than to the
+    /// application: a filter hook such as <c>OnActionExecuting</c>, <c>Dispose</c>, or
+    /// anything else first declared by a framework base type.
+    /// </summary>
+    /// <remarks>
+    /// The framework excludes these from action discovery, and an override of one is still
+    /// the hook rather than an endpoint. It matters most for an action carrying no verb
+    /// attribute, which is otherwise indistinguishable from a lifecycle override by shape
+    /// alone — both are just public instance methods returning something.
+    /// </remarks>
+    private static bool IsFrameworkMember(IMethodSymbol method)
+    {
+        // The base definition is what says who introduced the member; an override in the
+        // application's own controller is still the framework's method.
+        var declaration = method;
+        while (declaration.OverriddenMethod is { } overridden)
+        {
+            declaration = overridden;
+        }
+
+        if (declaration.ContainingType is not { } declaring)
+        {
+            return false;
+        }
+
+        return declaring.SpecialType == SpecialType.System_Object ||
+               ControllerBaseTypes.Contains(
+                   SymbolNaming.FullyQualifiedName(declaring),
+                   StringComparer.Ordinal);
+    }
 
     /// <summary>
     /// The verb and template of each <c>[HttpGet]</c>-style attribute. One method may carry
@@ -165,20 +232,60 @@ public sealed class EndpointCollector
             else if (name == "RouteAttribute" && mappings.Count == 0)
             {
                 // A bare [Route] on an action accepts every verb.
-                mappings.Add(("ANY", FirstStringArgument(attribute)));
+                mappings.Add((AnyVerb, FirstStringArgument(attribute)));
             }
         }
 
         return mappings;
     }
 
-    /// <summary>Every <c>[Route]</c> template on a symbol, with its tokens substituted.</summary>
-    private static List<string> RouteTemplates(ISymbol symbol, INamedTypeSymbol controller, IMethodSymbol? action) =>
+    /// <summary>
+    /// The controller's route templates, following the base-type chain.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>[Route]</c> is declared <c>Inherited</c>, so a controller that carries none of
+    /// its own is routed by the nearest ancestor that does. That is the ordinary
+    /// base-controller pattern — one abstract base holding
+    /// <c>[Route("api/v1/[controller]")]</c> for a whole area — and reading only the
+    /// attributes applied directly to the derived type left every one of its actions with
+    /// an empty prefix, which collapsed the route to <c>/</c>.
+    /// </para>
+    /// <para>
+    /// Tokens are still expanded against the derived type, so <c>[controller]</c> names the
+    /// controller that inherited the template rather than the base that declared it.
+    /// </para>
+    /// <para>
+    /// The nearest declaration wins rather than accumulating down the hierarchy. A
+    /// hierarchy where two levels both declare a route is the one case this reads
+    /// conservatively: the derived template is listed and the inherited one is not.
+    /// </para>
+    /// </remarks>
+    private static List<string> ControllerRouteTemplates(INamedTypeSymbol controller)
+    {
+        for (var current = controller; current is not null; current = current.BaseType)
+        {
+            if (RawRouteTemplates(current) is { Count: > 0 } templates)
+            {
+                return templates;
+            }
+        }
+
+        return [];
+    }
+
+    /// <summary>Every <c>[Route]</c> template on a symbol, exactly as written.</summary>
+    private static List<string> RawRouteTemplates(ISymbol symbol) =>
         symbol.GetAttributes()
             .Where(attribute => attribute.AttributeClass is { Name: "RouteAttribute" } routeClass &&
                                 SymbolNaming.NamespaceOf(routeClass) == Mvc)
             .Select(FirstStringArgument)
             .OfType<string>()
+            .ToList();
+
+    /// <summary>Every <c>[Route]</c> template on a symbol, with its tokens substituted.</summary>
+    private static List<string> RouteTemplates(ISymbol symbol, INamedTypeSymbol controller, IMethodSymbol? action) =>
+        RawRouteTemplates(symbol)
             .Select(template => SubstituteTokens(template, controller, action))
             .ToList();
 
@@ -193,13 +300,83 @@ public sealed class EndpointCollector
             : controller.Name;
 
         var result = template.Replace("[controller]", name, StringComparison.OrdinalIgnoreCase);
+        result = SubstituteParameter(result, "controller", name);
+
+        // [area] is filled from [Area], which is inherited like [Route] is. Left as
+        // written when the controller declares no area, because an unexpanded token is at
+        // least visibly unresolved, whereas an empty segment would read as a real route.
+        if (AreaOf(controller) is { } area)
+        {
+            result = result.Replace("[area]", area, StringComparison.OrdinalIgnoreCase);
+            result = SubstituteParameter(result, "area", area);
+        }
 
         if (action is not null)
         {
             result = result.Replace("[action]", action.Name, StringComparison.OrdinalIgnoreCase);
+            result = SubstituteParameter(result, "action", action.Name);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// The area a controller belongs to, from <c>[Area]</c> anywhere up its base-type
+    /// chain, or <c>null</c> when it declares none.
+    /// </summary>
+    private static string? AreaOf(INamedTypeSymbol controller)
+    {
+        for (var current = controller; current is not null; current = current.BaseType)
+        {
+            foreach (var attribute in current.GetAttributes())
+            {
+                if (attribute.AttributeClass is { Name: "AreaAttribute" } areaClass &&
+                    SymbolNaming.NamespaceOf(areaClass) == Mvc &&
+                    FirstStringArgument(attribute) is { Length: > 0 } area)
+                {
+                    return area;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Replaces a <c>{controller}</c>, <c>{action}</c> or <c>{area}</c> route parameter,
+    /// with or without a default, by the name it is matched against.
+    /// </summary>
+    /// <remarks>
+    /// These are route parameters rather than the <c>[controller]</c>/<c>[action]</c>
+    /// tokens, and the framework matches them against the controller and action names. A
+    /// template such as <c>auth/{action=Index}/{id?}</c> therefore describes one route per
+    /// action, and substituting the name is what gives each action the URL that actually
+    /// reaches it — otherwise every action on the controller is listed under one
+    /// indistinguishable template. Other parameters are left alone: only these two are
+    /// bound to something known at compile time.
+    /// </remarks>
+    private static string SubstituteParameter(string template, string parameter, string value)
+    {
+        var open = template.IndexOf('{' + parameter, StringComparison.OrdinalIgnoreCase);
+        if (open < 0)
+        {
+            return template;
+        }
+
+        var close = template.IndexOf('}', open);
+        if (close < 0)
+        {
+            return template;
+        }
+
+        // Only a bare parameter or one with a default is substituted; a constraint such as
+        // {action:regex(...)} is left as written rather than half-resolved.
+        var inner = template[(open + 1)..close];
+        var name = inner.Split('=')[0];
+
+        return string.Equals(name, parameter, StringComparison.OrdinalIgnoreCase)
+            ? template[..open] + value + template[(close + 1)..]
+            : template;
     }
 
     /// <summary>

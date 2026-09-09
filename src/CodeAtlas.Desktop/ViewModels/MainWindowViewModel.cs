@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Windows.Input;
-using CodeAtlas.Core.Diff;
 using CodeAtlas.Core.Indexing;
 using CodeAtlas.Core.Model;
 using CodeAtlas.Core.Storage;
@@ -31,7 +30,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private WorkspaceTarget? _target;
     private CancellationTokenSource? _indexingCancellation;
     private CancellationTokenSource? _searchCancellation;
-    private CancellationTokenSource? _changesCancellation;
 
     private string _workspaceTitle = "No workspace open";
     private string _workspacePath = string.Empty;
@@ -64,10 +62,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private MigrationRowViewModel? _selectedMigration;
     private ConfigurationRowViewModel? _selectedConfiguration;
     private ExternalRowViewModel? _selectedExternalService;
-    private ChangedSymbolViewModel? _selectedChange;
-    private string _changesNotice = string.Empty;
-    private bool _isAnalysingChanges;
-    private bool _changesLoaded;
 
     public MainWindowViewModel()
     {
@@ -81,14 +75,27 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             parameter => OpenEndpointSource(parameter as EndpointViewModel));
         SetInfrastructureViewCommand = new RelayCommand(
             parameter => InfrastructureView = (InfrastructureView)parameter!);
-        RefreshChangesCommand = new AsyncRelayCommand(
-            _ => AnalyseChangesAsync(), _ => HasGitRepository && !IsAnalysingChanges);
-
         // Picking a node explores from where the reader already is, so it updates the
         // details pane without moving the graph out from under them; "focus here" is the
         // explicit way to re-root.
         Graph.NodeSelected += id => _ = ShowDetailsAsync(id, updateGraphRoot: false);
         Graph.OpenSourceRequested += OpenSource;
+
+        // A changed symbol is explored the way an endpoint or a resource is: show it, and
+        // open the graph on it, because "what does this change touch" is a graph question.
+        // Every starting point the spec names reduces to a symbol id, so there is one
+        // command rather than one entry point per kind: a method or type from the details
+        // pane, an endpoint's handler, an entity, or a changed symbol.
+        AnalyzeImpactCommand = new RelayCommand(
+            parameter => AnalyzeImpact(ImpactTarget(parameter)),
+            parameter => ImpactTarget(parameter) is not null);
+
+        Impact.SymbolSelected += id => _ = ShowDetailsAsync(id);
+        Impact.EndpointSelected += endpoint => _ = ShowEndpointAsync(new EndpointViewModel(endpoint));
+
+        GitChanges.SymbolSelected += id => _ = ShowChangedSymbolAsync(id);
+        GitChanges.ChangedSetUpdated += Graph.SetChangedSymbols;
+        GitChanges.StatusReported += message => StatusMessage = message;
 
         foreach (var path in _recentWorkspaces.Load())
         {
@@ -135,22 +142,79 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _activeSection, value))
             {
-                // The graph only queries while it is on screen; selecting symbols in the
-                // tree or in search results costs nothing until the reader looks at it.
+                // The graph and the impact walk only query while they are on screen;
+                // selecting symbols in the tree or in search results costs nothing until
+                // the reader looks at them.
                 Graph.IsActive = value == AppSection.Graph;
-
-                // The same rule for the diff: Git is only run once the reader asks to see
-                // what changed, and then not again until they ask for it or reindex.
-                if (value == AppSection.Changes && !_changesLoaded)
-                {
-                    _ = AnalyseChangesAsync();
-                }
+                Impact.IsActive = value == AppSection.Impact;
             }
         }
     }
 
     /// <summary>The semantic neighbourhood of the selected symbol.</summary>
     public GraphViewModel Graph { get; } = new();
+
+    /// <summary>How the working tree differs from its Git baseline.</summary>
+    public GitChangesViewModel GitChanges { get; } = new();
+
+    /// <summary>What a change to the selected symbol can affect.</summary>
+    public ImpactViewModel Impact { get; } = new();
+
+    /// <summary>Runs impact analysis on a symbol and shows the result.</summary>
+    public RelayCommand AnalyzeImpactCommand { get; }
+
+    /// <summary>
+    /// The symbol an impact request is about, whatever kind of row it came from.
+    /// </summary>
+    /// <remarks>
+    /// A null parameter means "whatever is selected", which is what the details pane's own
+    /// button passes. An endpoint is analysed through its handler, falling back to the
+    /// controller that declares it, because that is the symbol its behaviour lives on.
+    /// </remarks>
+    private long? ImpactTarget(object? parameter) => parameter switch
+    {
+        EndpointViewModel endpoint =>
+            endpoint.Endpoint.HandlerSymbolId ?? endpoint.Endpoint.DeclaringTypeSymbolId,
+        ChangedSymbolViewModel changed => changed.SymbolId,
+        EntityRowViewModel entity => entity.SymbolId,
+        ExternalRowViewModel external => external.SymbolId,
+        ConfigurationRowViewModel configuration => configuration.SymbolId,
+        SymbolLink link => link.SymbolId,
+        long id => id,
+        _ => Details?.Symbol.Id,
+    };
+
+    private void AnalyzeImpact(long? symbolId)
+    {
+        if (symbolId is not { } id)
+        {
+            StatusMessage = "That row has no declaration in this solution to analyse.";
+            return;
+        }
+
+        Impact.Analyze(id);
+        ActiveSection = AppSection.Impact;
+    }
+
+    /// <summary>
+    /// Opens a changed symbol: its details, and the graph rooted on it.
+    /// </summary>
+    /// <remarks>
+    /// Nothing about this is Git-specific by the time it lands here — the callers, callees,
+    /// implementations, endpoints and entities of a changed method are the ones the index
+    /// already holds. Mapping the diff to a symbol is the whole of the work; navigating
+    /// from it is the existing details pane.
+    /// </remarks>
+    private async Task ShowChangedSymbolAsync(long symbolId)
+    {
+        await ShowDetailsAsync(symbolId);
+
+        if (Details is { } details)
+        {
+            StatusMessage = $"{details.Symbol.Display} changed in the working tree.";
+            ActiveSection = AppSection.Graph;
+        }
+    }
 
     // ---- endpoints ----------------------------------------------------------
 
@@ -460,167 +524,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             fields.Any(field => field.Contains(filter, StringComparison.OrdinalIgnoreCase));
     }
 
-    // ---- changes ------------------------------------------------------------
-
-    /// <summary>
-    /// The declarations the working tree changed against <c>HEAD</c>, each with the tests
-    /// that exercise it. Read from the index, so it is as current as the last indexing run.
-    /// </summary>
-    public ObservableCollection<ChangedSymbolViewModel> Changes { get; } = [];
-
-    public AsyncRelayCommand RefreshChangesCommand { get; }
-
-    public int ChangeCount => Changes.Count;
-
-    public bool HasChanges => Changes.Count > 0;
-
-    /// <summary>Changed methods nothing was found to cover, which is what earns a warning.</summary>
-    public int UntestedCount => Changes.Count(change => change.IsUntested);
-
-    public bool HasUntested => UntestedCount > 0;
-
-    public string UntestedSummary => UntestedCount == 1
-        ? "1 changed method has no detected tests"
-        : $"{UntestedCount} changed methods have no detected tests";
-
-    /// <summary>Why the list is empty, or what it could not account for.</summary>
-    public string ChangesNotice
-    {
-        get => _changesNotice;
-        private set
-        {
-            if (SetProperty(ref _changesNotice, value))
-            {
-                OnPropertyChanged(nameof(HasChangesNotice));
-            }
-        }
-    }
-
-    public bool HasChangesNotice => ChangesNotice.Length > 0;
-
-    public bool IsAnalysingChanges
-    {
-        get => _isAnalysingChanges;
-        private set
-        {
-            if (SetProperty(ref _isAnalysingChanges, value))
-            {
-                RefreshChangesCommand.RaiseCanExecuteChanged();
-            }
-        }
-    }
-
-    public ChangedSymbolViewModel? SelectedChange
-    {
-        get => _selectedChange;
-        set
-        {
-            if (SetProperty(ref _selectedChange, value) && value is not null)
-            {
-                _ = ShowDetailsAsync(value.SymbolId);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Runs the diff and relates every changed declaration to the tests over it.
-    /// </summary>
-    /// <remarks>
-    /// The whole thing is one background operation: the Git process, the index queries it
-    /// leads to, and the naming heuristics over them. A workspace outside a working tree
-    /// says so rather than showing an empty list.
-    /// </remarks>
-    private async Task AnalyseChangesAsync()
-    {
-        if (_database is not { } database)
-        {
-            return;
-        }
-
-        _changesLoaded = true;
-        Changes.Clear();
-        RefreshChangeCounts();
-
-        if (_target?.GitRoot is not { } repositoryRoot)
-        {
-            ChangesNotice = "This workspace is not inside a Git repository, so there is no diff to read.";
-            return;
-        }
-
-        _changesCancellation?.Cancel();
-        _changesCancellation?.Dispose();
-        _changesCancellation = new CancellationTokenSource();
-        var cancellationToken = _changesCancellation.Token;
-
-        IsAnalysingChanges = true;
-        ChangesNotice = string.Empty;
-
-        try
-        {
-            var impact = await Task.Run(
-                () => new ChangeImpactService(database).AnalyseAsync(
-                    repositoryRoot, cancellationToken: cancellationToken),
-                cancellationToken);
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            foreach (var change in impact.Changes)
-            {
-                Changes.Add(new ChangedSymbolViewModel(change));
-            }
-
-            ChangesNotice = Notice(impact);
-            StatusMessage = impact.Error is null
-                ? $"{ChangeCount} changed symbol(s) against HEAD."
-                : impact.Error;
-        }
-        catch (OperationCanceledException)
-        {
-            // Superseded by a newer run, or the workspace was closed.
-        }
-        finally
-        {
-            IsAnalysingChanges = false;
-            RefreshChangeCounts();
-        }
-    }
-
-    /// <summary>
-    /// What the list does not say for itself: why it failed, that nothing changed, or
-    /// which changed files the index has never seen — for those, "no tests" would be a
-    /// statement about the index rather than about the code.
-    /// </summary>
-    private static string Notice(ChangeImpact impact)
-    {
-        if (impact.Error is { } error)
-        {
-            return error;
-        }
-
-        var unmapped = impact.UnmappedFiles.Count switch
-        {
-            0 => string.Empty,
-            1 => $"1 changed file is not in the index: {impact.UnmappedFiles[0]}. Reindex to include it.",
-            var count => $"{count} changed files are not in the index. Reindex to include them.",
-        };
-
-        return impact.Changes.Count == 0 && unmapped.Length == 0
-            ? "Nothing in the working tree differs from HEAD."
-            : unmapped;
-    }
-
-    private void RefreshChangeCounts()
-    {
-        foreach (var property in (string[])
-                 [
-                     nameof(ChangeCount), nameof(HasChanges), nameof(UntestedCount),
-                     nameof(HasUntested), nameof(UntestedSummary), nameof(HasChangesNotice),
-                 ])
-        {
-            OnPropertyChanged(property);
-        }
-    }
-
     // ---- index summary ------------------------------------------------------
 
     public int ProjectCount
@@ -825,6 +728,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(HasDetails));
                 OpenSourceCommand.RaiseCanExecuteChanged();
                 ShowInGraphCommand.RaiseCanExecuteChanged();
+                AnalyzeImpactCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -867,7 +771,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             ? $"Git repository: {target.GitRoot}"
             : "Not inside a Git repository";
         OnPropertyChanged(nameof(HasGitRepository));
-        RefreshChangesCommand.RaiseCanExecuteChanged();
+        GitChanges.SetWorkspace(target);
         ActiveSection = AppSection.Overview;
 
         RecentWorkspaces.Clear();
@@ -955,6 +859,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             StatusMessage = $"Indexing failed: {e.Message}";
             _indexingFailed = true;
+
+            // Git does not depend on the index, so the section still has a file-level
+            // answer to give even when there is nothing to map it onto.
+            GitChanges.SetIndex(null);
             Diagnostics.Add(new IndexDiagnostic(Core.Model.DiagnosticSeverity.Error, null, e.Message));
             RefreshDiagnosticCounts();
         }
@@ -996,11 +904,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         RefreshDiagnosticCounts();
         Graph.SetDatabase(_database);
 
-        // The diff is read against the index, so a new index means the old answer is stale.
-        _changesLoaded = false;
-        Changes.Clear();
-        ChangesNotice = string.Empty;
-        RefreshChangeCounts();
+        Impact.SetDatabase(_database);
+
+        // Re-read Git against the index that has just become current: a reindex can move
+        // every declaration's recorded span, and the changed set is derived from those.
+        GitChanges.SetIndex(_database);
 
         _allEndpoints.Clear();
         _allEndpoints.AddRange(_database.GetEndpoints().Select(endpoint => new EndpointViewModel(endpoint)));
@@ -1196,6 +1104,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void ClearWorkspace()
     {
         Graph.SetDatabase(null);
+        Impact.SetDatabase(null);
+        GitChanges.SetWorkspace(null);
         _database?.Dispose();
         _database = null;
 
@@ -1210,10 +1120,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         RefreshInfrastructure();
         SearchResults.Clear();
         OnPropertyChanged(nameof(HasSearchResults));
-        Changes.Clear();
-        ChangesNotice = string.Empty;
-        _changesLoaded = false;
-        RefreshChangeCounts();
         Diagnostics.Clear();
         Details = null;
         SearchSummary = string.Empty;
@@ -1231,8 +1137,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _indexingCancellation?.Cancel();
         _indexingCancellation?.Dispose();
         _searchCancellation?.Dispose();
-        _changesCancellation?.Cancel();
-        _changesCancellation?.Dispose();
         _database?.Dispose();
     }
 }

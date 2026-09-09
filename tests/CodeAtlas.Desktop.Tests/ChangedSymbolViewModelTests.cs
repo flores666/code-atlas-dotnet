@@ -4,22 +4,23 @@ using CodeAtlas.Desktop.ViewModels;
 namespace CodeAtlas.Desktop.Tests;
 
 /// <summary>
-/// How a changed symbol reads in the list. What relates a test to a symbol is covered
-/// against a real index in CodeAtlas.Core.Tests; what matters here is that a row never
-/// overstates what was found.
+/// How the tests over a changed symbol read in the list. What relates a test to a symbol
+/// is covered against a real index in CodeAtlas.Core.Tests; what matters here is that a
+/// row never overstates what was found.
 /// </summary>
 public class ChangedSymbolViewModelTests
 {
-    private static readonly IndexedSymbol Method = new()
+    private static ChangedSymbol Changed(bool isMeaningful, params RelatedTest[] tests) => new()
     {
-        Id = 7,
-        Kind = IndexedSymbolKind.Method,
-        Name = "Get",
+        SymbolId = 7,
         Display = "Get(int id)",
-        FullyQualifiedName = "Shop.UserService.Get(System.Int32)",
-        ContainerFullyQualifiedName = "Shop.UserService",
+        Kind = IndexedSymbolKind.Method,
+        Change = SymbolChangeKind.Modified,
+        Container = "Shop.UserService",
         FilePath = "/repo/src/Shop/UserService.cs",
         Line = 19,
+        Tests = tests,
+        IsMeaningful = isMeaningful,
     };
 
     private static RelatedTest Test(int id, TestRelationStrategy strategy) => new(
@@ -37,15 +38,12 @@ public class ChangedSymbolViewModelTests
     [Fact]
     public void Counts_the_exact_tests_apart_from_the_probable_ones()
     {
-        var row = new ChangedSymbolViewModel(new ChangedSymbol(
-            Method,
-            [
-                Test(1, TestRelationStrategy.DirectReference),
-                Test(2, TestRelationStrategy.NamingConvention),
-            ],
-            IsMeaningful: true));
+        var row = new ChangedSymbolViewModel(Changed(
+            isMeaningful: true,
+            Test(1, TestRelationStrategy.DirectReference),
+            Test(2, TestRelationStrategy.NamingConvention)));
 
-        Assert.Equal("2 tests · 1 exact", row.Summary);
+        Assert.Equal("2 tests · 1 exact", row.TestSummary);
         Assert.False(row.IsUntested);
         Assert.Equal("UserServiceTests.Case_1()", row.Tests[0].Name);
         Assert.True(row.Tests[0].IsExact);
@@ -56,35 +54,33 @@ public class ChangedSymbolViewModelTests
     [Fact]
     public void Says_so_plainly_when_only_guesses_were_found()
     {
-        var row = new ChangedSymbolViewModel(new ChangedSymbol(
-            Method,
-            [Test(1, TestRelationStrategy.NamespaceSimilarity)],
-            IsMeaningful: true));
+        var row = new ChangedSymbolViewModel(Changed(
+            isMeaningful: true,
+            Test(1, TestRelationStrategy.NamespaceSimilarity)));
 
-        Assert.Equal("1 probable", row.Summary);
+        Assert.Equal("1 probable", row.TestSummary);
         Assert.False(row.IsUntested);
     }
 
     [Fact]
     public void Warns_only_about_a_meaningful_change_with_nothing_over_it()
     {
-        var warned = new ChangedSymbolViewModel(new ChangedSymbol(Method, [], IsMeaningful: true));
-        var quiet = new ChangedSymbolViewModel(new ChangedSymbol(Method, [], IsMeaningful: false));
+        var warned = new ChangedSymbolViewModel(Changed(isMeaningful: true));
+        var quiet = new ChangedSymbolViewModel(Changed(isMeaningful: false));
 
         Assert.True(warned.IsUntested);
-        Assert.Equal("no tests found", warned.Summary);
+        Assert.Equal("no tests found", warned.TestSummary);
 
         Assert.False(quiet.IsUntested);
-        Assert.False(quiet.HasSummary);
+        Assert.False(quiet.HasTestSummary);
     }
 
     [Fact]
     public void Defers_a_long_list_to_the_details_pane()
     {
-        var row = new ChangedSymbolViewModel(new ChangedSymbol(
-            Method,
-            [.. Enumerable.Range(1, 6).Select(id => Test(id, TestRelationStrategy.DirectReference))],
-            IsMeaningful: true));
+        var row = new ChangedSymbolViewModel(Changed(
+            isMeaningful: true,
+            [.. Enumerable.Range(1, 6).Select(id => Test(id, TestRelationStrategy.DirectReference))]));
 
         Assert.Equal(4, row.Tests.Count);
         Assert.True(row.HasMore);

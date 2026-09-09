@@ -108,6 +108,8 @@ public sealed class SymbolCollector
             }
         }
 
+        collector.ReportCompilationErrors(compilation, project.Name, cancellationToken);
+
         // Merged last, through the same guard the collector's own edges pass, so a
         // relation found twice by two readings is still stored once.
         foreach (var relation in collector._persistence.Relations
@@ -430,14 +432,14 @@ public sealed class SymbolCollector
     private static bool IsInSource(ISymbol symbol) => symbol.Locations.Any(l => l.IsInSource);
 
     /// <summary>
-    /// Where a declaration starts, and where it ends.
+    /// Where a symbol is declared, and how far the declaration reaches.
     /// </summary>
     /// <remarks>
-    /// The start is the identifier, which is what an editor should open on. The end comes
-    /// from the declaration syntax in that same file, so it covers the body: a symbol's
-    /// span is what a diff hunk is matched against, and a method whose span stopped at its
-    /// name would never be reported as changed. A partial type contributes several
-    /// declarations, and the one holding the identifier is the one measured.
+    /// The position comes from the symbol's own location, which is its identifier. The end
+    /// comes from the declaring syntax in that same file, which is the whole declaration
+    /// including its body — the span a changed line has to be tested against. A partial
+    /// type has one declaring reference per part, so the one in the file the location
+    /// named is the only one that describes this occurrence.
     /// </remarks>
     private static (string? Path, int? Line, int? Column, int? EndLine) LocationOf(ISymbol symbol)
     {
@@ -447,16 +449,23 @@ public sealed class SymbolCollector
         }
 
         var span = location.GetLineSpan();
-        var start = span.StartLinePosition.Line + 1;
-
         var declaration = symbol.DeclaringSyntaxReferences
-            .FirstOrDefault(reference => reference.Span.Contains(location.SourceSpan));
+            .FirstOrDefault(reference => string.Equals(
+                reference.SyntaxTree.FilePath,
+                location.SourceTree?.FilePath,
+                StringComparison.Ordinal));
 
-        var end = declaration is null
-            ? start
-            : declaration.SyntaxTree.GetLineSpan(declaration.Span).EndLinePosition.Line + 1;
+        // Read from the text span rather than the node, so nothing has to be materialised
+        // to learn where a declaration ends.
+        var endLine = declaration is not null
+            ? declaration.SyntaxTree.GetLineSpan(declaration.Span).EndLinePosition.Line + 1
+            : span.EndLinePosition.Line + 1;
 
-        return (span.Path, start, span.StartLinePosition.Character + 1, Math.Max(start, end));
+        return (
+            span.Path,
+            span.StartLinePosition.Line + 1,
+            span.StartLinePosition.Character + 1,
+            Math.Max(endLine, span.StartLinePosition.Line + 1));
     }
 
     // ---- calls and references -----------------------------------------------
@@ -464,6 +473,60 @@ public sealed class SymbolCollector
     /// <summary>
     /// Binds one document once and hands it to every consumer that needs a semantic model.
     /// </summary>
+    /// <summary>
+    /// Error ids that mean a reference is missing rather than that the code is wrong.
+    /// </summary>
+    private static readonly IReadOnlySet<string> UnresolvedReferenceIds =
+        new HashSet<string>(StringComparer.Ordinal) { "CS0246", "CS0234", "CS0012", "CS0400", "CS1069" };
+
+    /// <summary>
+    /// Reports a project that loaded but does not compile.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This earns a diagnostic because the failure is otherwise invisible, and an
+    /// unreported one leaves the index quietly wrong rather than obviously empty:
+    /// declarations still come through, so the project looks indexed and the symbol count
+    /// looks healthy, while every binding that needed a missing reference silently
+    /// resolved to nothing.
+    /// </para>
+    /// <para>
+    /// Endpoints are the clearest casualty and so are named explicitly. A controller whose
+    /// base type did not resolve is not recognisably a controller; a <c>MapGet</c> whose
+    /// builder parameter is an error type is not recognisably a route. Both are then
+    /// absent for a reason that has nothing to do with the code being read, which is
+    /// precisely the case a reader cannot diagnose on their own.
+    /// </para>
+    /// </remarks>
+    private void ReportCompilationErrors(
+        Compilation compilation,
+        string projectName,
+        CancellationToken cancellationToken)
+    {
+        var errors = compilation
+            .GetDiagnostics(cancellationToken)
+            .Where(diagnostic => diagnostic.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
+            .ToList();
+
+        if (errors.Count == 0)
+        {
+            return;
+        }
+
+        var unresolved = errors.Where(error => UnresolvedReferenceIds.Contains(error.Id)).ToList();
+
+        var message = unresolved.Count > 0
+            ? $"{errors.Count} compilation error(s), {unresolved.Count} of them unresolved references " +
+              $"(for example: {unresolved[0].GetMessage()}). Types the compiler could not bind are " +
+              "invisible to analysis, so endpoints, relations and infrastructure in this project are " +
+              "under-reported. This usually means the targeting pack for the project's target framework " +
+              "is not installed, or the solution has never been restored. Fix that and reindex."
+            : $"{errors.Count} compilation error(s), so this project is only partly analysed " +
+              $"(for example: {errors[0].GetMessage()}).";
+
+        _diagnostics.Add(new IndexDiagnostic(Model.DiagnosticSeverity.Warning, projectName, message));
+    }
+
     private async Task VisitDocumentAsync(Document document, CancellationToken cancellationToken)
     {
         if (await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false) is not { } root ||

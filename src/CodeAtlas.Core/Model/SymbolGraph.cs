@@ -111,6 +111,18 @@ public sealed record GraphOptions
     /// </remarks>
     public IReadOnlyList<long> Seeds { get; init; } = [];
 
+    /// <summary>
+    /// When set, the walk admits only these symbols.
+    /// </summary>
+    /// <remarks>
+    /// A node filter rather than an edge filter, which is why it is not a
+    /// <see cref="RelationGroupKind"/>: "only the code that changed" is a statement about
+    /// which symbols may appear, not about which kinds of relation to follow. The root and
+    /// the seeds are always kept regardless — a graph that answered a question about one
+    /// symbol by omitting that symbol would be unreadable.
+    /// </remarks>
+    public IReadOnlySet<long>? RestrictTo { get; init; }
+
     public int MaxNodes { get; init; } = DefaultMaxNodes;
 
     public int MaxNeighboursPerNode { get; init; } = DefaultMaxNeighboursPerNode;

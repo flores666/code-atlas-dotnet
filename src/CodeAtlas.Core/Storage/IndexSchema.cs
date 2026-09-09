@@ -41,8 +41,8 @@ public static class IndexSchema
             container_fqn TEXT,
             file_path     TEXT,
             line          INTEGER,
-            end_line      INTEGER,
             start_column  INTEGER,
+            end_line      INTEGER,
             accessibility TEXT
         );
 
@@ -199,7 +199,11 @@ public static class IndexSchema
         CREATE INDEX ix_symbols_fqn       ON symbols(fqn, project_id);
         CREATE INDEX ix_symbols_project   ON symbols(project_id, namespace);
         CREATE INDEX ix_symbols_container ON symbols(container_fqn);
-        CREATE INDEX ix_symbols_file      ON symbols(file_path);
+
+        -- Mapping a diff to symbols asks for one file at a time, so the file is the key
+        -- that query needs; the line ordering makes the containment scan a walk in
+        -- declaration order rather than a sort.
+        CREATE INDEX ix_symbols_file      ON symbols(file_path, line);
 
         CREATE INDEX        ix_attributes_symbol ON symbol_attributes(symbol_id);
         -- Test methods are found by their attribute, so this table is read from both ends.
