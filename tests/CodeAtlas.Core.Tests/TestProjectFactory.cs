@@ -29,11 +29,30 @@ internal static class TestProjectFactory
         CreateSolution(SourceRoot, new TestProjectSpec(name, documents, []))[0];
 
     /// <summary>
+    /// Builds a project over files that really exist on disk, reading their current
+    /// content.
+    /// </summary>
+    /// <remarks>
+    /// The change-mapping tests need this rather than <see cref="Create"/>: a diff is
+    /// mapped by file path and line, so the index has to be built from the same paths Git
+    /// reports and from the content that is on disk right now. The paths are absolute
+    /// already, so they are rooted at nothing further.
+    /// </remarks>
+    public static Project CreateFromFiles(string name, params string[] absolutePaths) =>
+        CreateSolution(
+            sourceRoot: string.Empty,
+            new TestProjectSpec(
+                name,
+                [.. absolutePaths.Select(path => (path, File.ReadAllText(path)))],
+                []))[0];
+
+    /// <summary>
     /// Several projects in one solution, each able to reference the ones named before it.
     /// </summary>
     /// <param name="sourceRoot">
     /// What document paths are rooted at. A test that reads its files back — a diff against
-    /// a real working tree — passes that tree; the rest pass nothing real.
+    /// a real working tree — passes that tree, or nothing when its documents already carry
+    /// absolute paths; the rest pass nothing real.
     /// </param>
     public static IReadOnlyList<Project> CreateSolution(string sourceRoot, params TestProjectSpec[] projects)
     {
@@ -60,7 +79,7 @@ internal static class TestProjectFactory
             {
                 workspace.AddDocument(DocumentInfo.Create(
                     DocumentId.CreateNewId(projectId),
-                    fileName,
+                    Path.GetFileName(fileName),
                     loader: TextLoader.From(TextAndVersion.Create(SourceText.From(source), VersionStamp.Default)),
                     filePath: Path.Combine(sourceRoot, fileName)));
             }

@@ -72,12 +72,12 @@ public sealed class IndexWriteSession : IDisposable
         _insertSymbol = Prepare(
             """
             INSERT INTO symbols (kind, name, fqn, display, project_id, namespace,
-                                 container_fqn, file_path, line, end_line, start_column, accessibility)
+                                 container_fqn, file_path, line, start_column, end_line, accessibility)
             VALUES (@kind, @name, @fqn, @display, @project, @namespace,
-                    @container, @file, @line, @endLine, @column, @accessibility)
+                    @container, @file, @line, @column, @endLine, @accessibility)
             """,
             "@kind", "@name", "@fqn", "@display", "@project", "@namespace",
-            "@container", "@file", "@line", "@endLine", "@column", "@accessibility");
+            "@container", "@file", "@line", "@column", "@endLine", "@accessibility");
 
         _insertProjectReference = Prepare(
             "INSERT INTO project_references (project_id, target_name) VALUES (@project, @target)",
@@ -204,8 +204,8 @@ public sealed class IndexWriteSession : IDisposable
             Set(_insertSymbol, "@container", symbol.ContainerFullyQualifiedName);
             Set(_insertSymbol, "@file", symbol.FilePath);
             Set(_insertSymbol, "@line", symbol.Line);
-            Set(_insertSymbol, "@endLine", symbol.EndLine);
             Set(_insertSymbol, "@column", symbol.Column);
+            Set(_insertSymbol, "@endLine", symbol.EndLine);
             Set(_insertSymbol, "@accessibility", symbol.Accessibility);
             _insertSymbol.ExecuteNonQuery();
 

@@ -47,6 +47,175 @@ public class EndpointCollectorTests
         Assert.Equal("UsersController.Create", Route(endpoints, "POST", "/api/Users").HandlerDisplay);
     }
 
+    /// <summary>
+    /// <c>[Route]</c> is inherited, so a controller carrying none of its own is routed by
+    /// its base. Reading only directly-applied attributes left every action with an empty
+    /// prefix, which collapsed the whole controller to <c>/</c>.
+    /// </summary>
+    [Fact]
+    public async Task Routes_a_controller_by_the_route_its_base_class_declares()
+    {
+        var endpoints = await CollectAsync("""
+                [ApiController]
+                [Route("api/v1/[controller]")]
+                public abstract class ApiControllerBase : ControllerBase
+                {
+                }
+
+                public class OrdersController : ApiControllerBase
+                {
+                    [HttpGet]
+                    public IActionResult List() => Ok();
+
+                    [HttpGet("{id}")]
+                    public IActionResult Get(int id) => Ok();
+                }
+            """);
+
+        // [controller] names the type that inherited the template, not the base that
+        // declared it.
+        Assert.Equal("OrdersController.List", Route(endpoints, "GET", "/api/v1/Orders").HandlerDisplay);
+        Assert.Equal("OrdersController.Get", Route(endpoints, "GET", "/api/v1/Orders/{id}").HandlerDisplay);
+    }
+
+    /// <summary>
+    /// The template is taken from the nearest declaration, so a derived controller that
+    /// states its own route is not also listed under its base's.
+    /// </summary>
+    [Fact]
+    public async Task Prefers_the_controllers_own_route_over_its_bases()
+    {
+        var endpoints = await CollectAsync("""
+                [Route("api/v1/[controller]")]
+                public abstract class ApiControllerBase : ControllerBase
+                {
+                }
+
+                [Route("api/v2/[controller]")]
+                public class OrdersController : ApiControllerBase
+                {
+                    [HttpGet]
+                    public IActionResult List() => Ok();
+                }
+            """);
+
+        Assert.Equal("OrdersController.List", Route(endpoints, "GET", "/api/v2/Orders").HandlerDisplay);
+        Assert.DoesNotContain(endpoints, endpoint => endpoint.Route == "/api/v1/Orders");
+    }
+
+    /// <summary>
+    /// Inheritance is followed through however many levels sit between the controller and
+    /// the base that carries the route.
+    /// </summary>
+    [Fact]
+    public async Task Follows_the_route_through_an_intermediate_base_class()
+    {
+        var endpoints = await CollectAsync("""
+                [Route("api/[controller]")]
+                public abstract class RootController : ControllerBase
+                {
+                }
+
+                public abstract class SecuredController : RootController
+                {
+                }
+
+                public class ReportsController : SecuredController
+                {
+                    [HttpGet("summary")]
+                    public IActionResult Summary() => Ok();
+                }
+            """);
+
+        Assert.Equal(
+            "ReportsController.Summary",
+            Route(endpoints, "GET", "/api/Reports/summary").HandlerDisplay);
+    }
+
+    /// <summary>
+    /// <c>[area]</c> is filled from <c>[Area]</c>, which is inherited the way
+    /// <c>[Route]</c> is. Left unexpanded it produced a literal <c>/[area]/...</c> that
+    /// matches no request and no filter the reader would type.
+    /// </summary>
+    [Fact]
+    public async Task Expands_the_area_token_from_the_area_attribute()
+    {
+        var endpoints = await CollectAsync("""
+                [Area("cms")]
+                [Route("[area]/npa/{api:guid}/[controller]")]
+                public class ReportsController : Controller
+                {
+                    [HttpGet]
+                    public IActionResult Index() => Ok();
+                }
+            """);
+
+        Assert.Equal(
+            "ReportsController.Index",
+            Route(endpoints, "GET", "/cms/npa/{api:guid}/Reports").HandlerDisplay);
+    }
+
+    [Fact]
+    public async Task Expands_the_area_route_parameter()
+    {
+        var endpoints = await CollectAsync("""
+                [Area("lk")]
+                [Route("{area}/appeals")]
+                public class AppealsController : Controller
+                {
+                    [HttpGet]
+                    public IActionResult Index() => Ok();
+                }
+            """);
+
+        Assert.Equal("/lk/appeals", Assert.Single(endpoints).Route);
+    }
+
+    /// <summary>
+    /// A controller with no <c>[Area]</c> keeps the token as written: an unexpanded token
+    /// is visibly unresolved, whereas dropping it would produce a route that looks real.
+    /// </summary>
+    [Fact]
+    public async Task Leaves_the_area_token_alone_without_an_area_attribute()
+    {
+        var endpoints = await CollectAsync("""
+                [Route("[area]/orphan")]
+                public class OrphanController : Controller
+                {
+                    [HttpGet]
+                    public IActionResult Index() => Ok();
+                }
+            """);
+
+        Assert.Equal("/[area]/orphan", Assert.Single(endpoints).Route);
+    }
+
+    /// <summary>
+    /// A filter hook or <c>Dispose</c> is not an endpoint. It matters most now that an
+    /// action needs no verb attribute to be listed: by shape alone an override of
+    /// <c>OnActionExecuting</c> is indistinguishable from a plain MVC action.
+    /// </summary>
+    [Fact]
+    public async Task Does_not_treat_a_controller_lifecycle_override_as_an_action()
+    {
+        var endpoints = await CollectAsync("""
+                [Route("[controller]")]
+                public class ThingsController : Controller
+                {
+                    public IActionResult Index() => Ok();
+
+                    public override void OnActionExecuting(
+                        Microsoft.AspNetCore.Mvc.Filters.ActionExecutingContext context)
+                    {
+                    }
+
+                    public override string ToString() => "things";
+                }
+            """);
+
+        Assert.Equal("ThingsController.Index", Assert.Single(endpoints).HandlerDisplay);
+    }
+
     [Fact]
     public async Task Reads_every_verb()
     {
@@ -148,7 +317,7 @@ public class EndpointCollectorTests
     }
 
     [Fact]
-    public async Task Skips_actions_with_no_attribute_route_and_non_actions()
+    public async Task Routes_a_verbless_action_by_its_controllers_template_and_skips_non_actions()
     {
         var endpoints = await CollectAsync("""
                 [Route("mixed")]
@@ -157,7 +326,9 @@ public class EndpointCollectorTests
                     [HttpGet("ok")]
                     public IActionResult Mapped() => Ok();
 
-                    // Conventional routing depends on the route table built at start-up.
+                    // Placing a route on the controller makes its actions attribute-routed,
+                    // so this one is reachable at the controller's own template and accepts
+                    // any verb. It is deliberately not reachable conventionally.
                     public IActionResult Conventional() => Ok();
 
                     [HttpGet("hidden")]
@@ -166,7 +337,90 @@ public class EndpointCollectorTests
                 }
             """);
 
-        Assert.Equal("/mixed/ok", Assert.Single(endpoints).Route);
+        Assert.Equal("MixedController.Mapped", Route(endpoints, "GET", "/mixed/ok").HandlerDisplay);
+        Assert.Equal("MixedController.Conventional", Route(endpoints, "ANY", "/mixed").HandlerDisplay);
+
+        Assert.Equal(2, endpoints.Count);
+        Assert.DoesNotContain(endpoints, endpoint => endpoint.Route.Contains("hidden", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A controller with no route template anywhere is reached only through the
+    /// conventional route table, which is assembled at start-up. Listing its actions at
+    /// <c>/</c> would name endpoints that do not exist.
+    /// </summary>
+    [Fact]
+    public async Task Claims_nothing_for_a_controller_with_no_route_template()
+    {
+        var endpoints = await CollectAsync("""
+                public class ConventionalController : Controller
+                {
+                    public IActionResult Index() => Ok();
+
+                    [HttpGet]
+                    public IActionResult Bare() => Ok();
+                }
+            """);
+
+        Assert.Empty(endpoints);
+    }
+
+    /// <summary>
+    /// The classic MVC site shape: a controller carrying <c>[Route]</c> and plain action
+    /// methods, with no verb attribute in sight.
+    /// </summary>
+    [Fact]
+    public async Task Lists_a_plain_mvc_action_under_its_controller_route()
+    {
+        var endpoints = await CollectAsync("""
+                [Route("search")]
+                public class SearchController : Controller
+                {
+                    public IActionResult Index() => Ok();
+                }
+            """);
+
+        Assert.Equal("SearchController.Index", Route(endpoints, "ANY", "/search").HandlerDisplay);
+    }
+
+    /// <summary>
+    /// <c>{action}</c> is a route parameter the framework matches against the action name,
+    /// so each action gets the URL that actually reaches it rather than every action on the
+    /// controller sharing one indistinguishable template.
+    /// </summary>
+    [Fact]
+    public async Task Resolves_the_action_route_parameter_per_action()
+    {
+        var endpoints = await CollectAsync("""
+                [Route("auth/{action=Index}/{id?}")]
+                public class AuthController : Controller
+                {
+                    public IActionResult Index() => Ok();
+
+                    public IActionResult Login() => Ok();
+                }
+            """);
+
+        Assert.Equal("AuthController.Index", Route(endpoints, "ANY", "/auth/Index/{id?}").HandlerDisplay);
+        Assert.Equal("AuthController.Login", Route(endpoints, "ANY", "/auth/Login/{id?}").HandlerDisplay);
+    }
+
+    /// <summary>
+    /// A constraint is left as written rather than half-resolved: substituting a name into
+    /// <c>{action:regex(...)}</c> would discard the constraint the route actually carries.
+    /// </summary>
+    [Fact]
+    public async Task Leaves_a_constrained_action_parameter_alone()
+    {
+        var endpoints = await CollectAsync("""
+                [Route("x/{action:regex(^[a-z]+$)}")]
+                public class ThingController : Controller
+                {
+                    public IActionResult Index() => Ok();
+                }
+            """);
+
+        Assert.Equal("/x/{action:regex(^[a-z]+$)}", Assert.Single(endpoints).Route);
     }
 
     [Fact]

@@ -5,14 +5,16 @@ Roslyn, indexes the declarations and exact semantic relations into a local SQLit
 lets you search, inspect and map them offline.
 
 **MVP 6** — the semantic code map, how an ASP.NET Core application is composed, where it
-meets everything outside itself, and which tests hold it in place. Declarations, calls,
-references, implementations, inheritance and type dependencies; a bounded graph of the
-neighbourhood around any symbol; DI registrations and the HTTP endpoints they are wired
-behind; the EF Core model and what reads and writes it; configuration keys and the options
-types they bind; the infrastructure boundaries the application crosses; and the xUnit,
-NUnit and MSTest tests that exercise any symbol — including the ones a working-tree diff
+meets everything outside itself, how it differs from its Git baseline, what a change to any
+of it can affect, and which tests hold it in place. Declarations, calls, references,
+implementations, inheritance and type dependencies; a bounded graph of the neighbourhood
+around any symbol; DI registrations and the HTTP endpoints they are wired behind; the EF
+Core model and what reads and writes it; configuration keys and the options types they
+bind; the infrastructure boundaries the application crosses; the working tree's own changes
+mapped onto the symbols they touch; deterministic impact analysis over all of it; and the
+xUnit, NUnit and MSTest tests that exercise any symbol, including the ones the working tree
 has just changed. No runtime tracing or coverage, Kubernetes analysis, message-broker
-topology, AI, embeddings, impact scoring or context export.
+topology, AI, embeddings or context export.
 
 ## Running
 
@@ -53,9 +55,48 @@ The graph filters by the same three cuts — **Database**, **Configuration**, **
 services** — alongside the existing ones, and a node standing on infrastructure is badged
 with the table it maps to or the technology it talks to.
 
-Any symbol lists its **Related tests** in the details pane, and **Changes** reads the
-working tree against `HEAD` to say what an edit means: every declaration the diff touched,
-the tests over each one, and a warning for a changed method nothing was found to cover.
+**Git Changes** answers "what have I changed, and what does it touch". It reads the branch,
+the working-tree status, the staged and unstaged paths, the untracked ones and the diff
+against `HEAD`, and then maps the diff's hunks onto the declarations they fall inside:
+
+```
+src/Basket.cs:8   Basket.Add(int)     modified   ->  calls Basket.Total()
+                  Basket              modified       called by CheckoutService.Complete()
+src/Coupon.cs     Coupon.Percent()    added
+src/Legacy.cs     LegacyBasket        removed    (inferred)
+```
+
+Select a changed symbol and it opens the way an endpoint or an entity does — on its
+callers, callees, implementations, the endpoints above it and the entities below it, which
+the index already holds. **Files** shows Git's own account of each path with its diff, and
+**History** the recent commits, or the selected file's own. The graph gains a **Changed
+code** filter, which narrows it to the symbols the working tree changed.
+
+**Impact** answers "what can this change affect". Start from a method, a type, an
+interface, an endpoint, an entity or a symbol the working tree changed, and it walks the
+recorded relations outwards:
+
+```
+IPricingService                                              High impact
+  Direct callers: 3     Indirect callers: 5     Endpoints: 2
+  Database entities: 2  External integrations: 1
+
+  Risk surface                    5 of 7 risk properties present
+  ! HTTP endpoints reachable      2 endpoints, including GET /orders/{id}
+  ! Authorization involved        1 reachable endpoint requires authorization
+  ! Persistence involved          2 entities, including Order, Invoice
+  ! External integration          1 boundary, including HTTP crm
+  ! Shared abstraction            It is an interface, 2 implementations
+  · High fan-in                   3 direct callers; 5 or more counts as high
+```
+
+Direct and indirect effects stay apart, every impacted symbol carries its distance in
+hops, and each risk property is shown with the fact behind it — present or not, so the
+surface accounts for what it ruled out as well as what it found.
+
+Any symbol lists its **Related tests** in the details pane, and a changed symbol carries
+them too: the tests over what you have just edited, with a warning for a changed method
+nothing was found to cover.
 
 ```
 UserService.Get(int id)             src/Shop/UserService.cs:19        2 tests
@@ -69,8 +110,14 @@ ReportService.Total()               src/Shop/ReportService.cs:5       1 probable
 PricingEngine.Quote(decimal net)    src/Shop/Legacy/Pricing.cs:5      no tests found
 ```
 
+Three tiers are compiler-derived and so exact — the test names the symbol, the fixture
+constructs the type that declares it, or another member of the fixture names it. The rest
+are read off names, namespaces and project references, and never claim to be exact.
+
 ```
-dotnet test              # 163 tests, including a real end-to-end indexing run
+dotnet test              # 271 tests, including a real end-to-end indexing run,
+                         # change mapping against a real Git working tree, and the
+                         # tests found over what that change touched
 ```
 
 Requires the .NET 10 SDK at run time: Roslyn loads projects through the SDK's MSBuild.
@@ -132,13 +179,30 @@ depends on in one hop. Without it the graph would need a constructor node in the
 every composition path.
 
 **Only statically resolvable routing is listed.** Attribute routing on controllers, with
-`[controller]` and `[action]` expanded the way the framework expands them, and Minimal API
-registrations whose template is a constant — including the accumulated `MapGroup` prefixes,
-followed through the local a group is usually held in. Conventional routing depends on the
-route table assembled at start-up and is not guessed at, so an endpoint that is listed is
-one that exists.
+`[controller]`, `[action]` and `[area]` expanded the way the framework expands them, and
+`[Route]` and `[Area]` followed up the base-type chain the way the framework inherits them
+— a controller whose route lives on an abstract base is routed by that base, and the token
+still names the derived controller — and Minimal API registrations whose template is a
+constant — including the accumulated `MapGroup` prefixes,
+followed through the local a group is usually held in. Conventional routing depends on the route table assembled at start-up and is not guessed
+at, so an endpoint that is listed is one that exists.
 
-**Relations are resolved by name, after the fact.** A project can reference a symbol from a
+**A route on the controller is what makes its actions endpoints, verb attribute or not.**
+Placing `[Route]` on a controller makes its actions attribute-routed — the framework's own
+rule — so a plain `public IActionResult Index()` on a `[Route("search")]` controller is
+listed at `/search` for any verb. That is the ordinary shape of an MVC site and skipping it
+left whole controllers invisible. The converse is enforced too: an action on a controller
+with no route template anywhere is reachable only through the conventional route table, so
+nothing is claimed for it rather than listing it at `/`. A `{action}` or `{controller}`
+route parameter is resolved per action, because a template such as
+`auth/{action=Index}/{id?}` describes one route per action and listing them all under the
+raw template tells the reader nothing; a constrained parameter such as
+`{action:regex(...)}` is left as written rather than half-resolved.
+
+**A controller's lifecycle members are not actions.** `OnActionExecuting`, `Dispose` and
+anything else first declared by `Controller`, `ControllerBase` or `object` is excluded, an
+override of it included. Without that, an action needing no verb attribute would be
+indistinguishable by shape from a filter hook: both are public instance methods.** A project can reference a symbol from a
 project that has not been indexed yet, so `SymbolCollector` emits relations naming both
 endpoints and `IndexWriteSession.Complete` resolves them to row ids in one pass once every
 symbol is present. Targets outside the solution keep their name and simply have no id — that
@@ -155,6 +219,18 @@ index without saying anything about your code.
 attributed to its property (via `AssociatedSymbol`, since an accessor's `ContainingSymbol` is
 the type), a local function's to its containing method, and a field's declared type to the
 field.
+
+**A project that does not compile says so.** The dangerous case is not a project MSBuild
+cannot load — that is loud — but one that loads and then fails to bind, because
+declarations still come through and the symbol count looks healthy while every binding that
+needed a missing reference silently resolved to nothing. Endpoints are the clearest
+casualty: a controller whose base type did not resolve is not recognisably a controller, and
+a `MapGet` whose builder parameter is an error type is not recognisably a route, so a
+perfectly ordinary web application reports zero endpoints for a reason that has nothing to
+do with its code. Compilation errors are therefore counted per project and reported, with
+unresolved references named as such, because their fix is environmental — a targeting pack
+that restore never downloaded, or a solution restored by a different SDK than the one doing
+the analysis — rather than in the code being read.
 
 **Partial failure is normal.** A project MSBuild cannot load is reported as a diagnostic and
 the rest are still indexed; a project whose compilation fails is stored as not-loaded; a file
@@ -262,6 +338,99 @@ break workspace loading.
 connection, and the UI queries from the thread pool. A rebuild opens its own connection, so
 WAL lets it write while readers still see the previous content.
 
+**Git is read through an allowlist, not a convention.** Every Git call goes through one
+runner that will execute only `rev-parse`, `status`, `diff`, `log` and `show` — verbs that
+cannot mutate a repository in any of their forms. `commit`, `push`, `pull`, `reset`,
+`checkout`, `stash` and `clean` are not merely unimplemented; the allowlist is what makes
+them unreachable, including from a future caller who has forgotten the rule, and there are
+tests that fail if it is widened. Every invocation also leads with `--no-optional-locks`,
+because `git status` otherwise refreshes the index as a side effect, and writing to the
+analysed repository — even a write Git considers routine — is exactly what CodeAtlas
+promises not to do.
+
+**A diff is joined to the index by coordinates, not by names.** The index is built from the
+files on disk, so a declaration's recorded span and the new side of a diff against `HEAD`
+are in the same line numbering, and a changed symbol is simply one whose span contains a
+line the diff touched. That is why `HEAD` is the baseline: it is both what a reader means
+by "what have I changed" and the only one that lines up with what was indexed. Mapping the
+whole working tree costs one indexed lookup per changed file and no re-analysis.
+
+**A symbol's span is stored, not just its position.** `end_line` is what makes the join
+above possible; the identifier's own location cannot say whether a line belongs to a
+declaration. A type's span covers its members, so an edit inside a method reports both the
+method and the type — both are true, and both are what a reader asks for.
+
+**A removal is attributed to the line that replaced it.** Hunk line numbers are derived by
+walking the body rather than trusting the header, so they are correct at any context
+setting; a `-` line has no new-side line of its own and takes the position that now sits
+where it was. Without that, deleting the body of a method would attribute the change to
+nothing.
+
+**Added is exact; removed is only reported where it can be.** A declaration every line of
+which is an added line is an addition — a method written into an existing class reads as
+added rather than as a change to the class — and that test needs nothing but the diff.
+Removed symbols are read from the baseline text of a *deleted file*, where "everything in
+it is gone" needs no matching against indexed names. Naming a declaration removed from a
+file that still exists would mean matching baseline syntax against resolved identities,
+which syntax alone cannot do reliably, so it is not attempted rather than guessed at.
+Everything read from baseline syntax is `Inferred` and never navigable: there is no
+compilation behind it, and nothing left to navigate to.
+
+**The changed set is never persisted.** Git state moves whenever the reader touches a file,
+so it is computed on demand and the cache file stays a function of the source alone. There
+is no file watcher either — refreshing is one click, and a watcher would be a second
+source of truth about when the index and the working tree agree.
+
+**"Changed code" filters nodes; every other chip filters edges.** "Only the code that
+changed" is a statement about which symbols may appear, not about which kinds of relation
+to follow, which is why it is a node restriction on the walk rather than a
+`RelationGroupKind`. The root and the seeds are always kept regardless, the walk still
+traverses the whole neighbourhood and merely declines to admit what falls outside the set —
+so two changed symbols joined through unchanged code still both appear — and the chip is
+only offered while there is a changed set to filter by.
+
+**Impact is two closures, not one.** "Who calls this" and "what does this touch" are
+different questions, and answering them with one walk would overstate both. The call
+closure follows `Calls` alone and is what direct and indirect callers mean; the dependency
+closure follows everything that constitutes a dependency — calls, references, implements,
+overrides, inherits, injects, resolves and signature types — and is the set whose
+endpoints, entities, integrations and configuration the report describes. Every entry is
+an edge the compiler recorded, so the same index and symbol always give the same answer
+and a reader can check any line of it.
+
+**A type is seeded through its members.** Calls land on methods, not on the class that
+declares them, so asking what depends on a service and walking only from the type itself
+finds nothing. The root's members seed the walk alongside it, which is what makes "eight
+places call this service" answerable at all.
+
+**The resource question runs the other way.** A boundary out of the application, a
+configuration read and an entity write are recorded against the component that performs
+them — the implementation behind the interface, the client that interface is wired to —
+which sits *below* a change rather than above it. Walking only backwards therefore finds
+every caller of a service and none of the infrastructure it talks to, which is half the
+answer. So the resource facts are gathered over the backwards closure together with what
+that closure in turn runs, following calls, injection and container resolution forwards.
+
+**Distance is on every impacted symbol, and it is the shortest path.** The walk is
+breadth-first, so a symbol is recorded the first time it is reached. Without it a
+transitive list reads as one undifferentiated blast radius, and an effect twenty hops away
+is presented as though it were the same claim as one two hops away.
+
+**Risk is a set of facts, not a score.** Seven properties, each shown with the evidence
+that decided it: reachable endpoints, public boundary, authorization, persistence, external
+integration, fan-in and shared abstraction. The level is a count of how many are present
+against thresholds that are public constants, so the UI states the rule it applied rather
+than only its verdict, and a reader can disagree with the assessment by checking the facts
+under it. Absent signals are shown too, because what a change was found *not* to touch is
+part of the answer. Nothing here is learned, weighted or opaque.
+
+**Impact stops where the compiler's knowledge stops.** A dispatch resolved at run time is
+not an edge, so it is not walked. In a MediatR-style application the request handlers a
+change reaches are found — they inject the same services as anything else — but the HTTP
+endpoints above them are not, because nothing statically connects an inline handler that
+sends a request to the class that handles it. The endpoint count is then honestly zero
+rather than guessed at, which is the same rule the endpoint list itself follows.
+
 **No ORM and no MVVM framework.** The queries are hand-written SQL over
 `Microsoft.Data.Sqlite`, and change notification is a ~30 line `ObservableObject`. Neither
 dependency would have earned its place at this size.
@@ -280,5 +449,13 @@ CODEATLAS_EDITOR='rider --line {line} {file}'
 ## The repository is never written to
 
 CodeAtlas opens the analysed solution read-only and writes only to its own cache directory.
-Git detection is a walk up the directory tree looking for `.git`, and the only Git command
-ever run is `git diff`, which reads.
+
+It does now run Git, which MVP 3 did not, and the constraint is enforced structurally
+rather than by convention: a single runner executes only the read-only verbs
+(`rev-parse`, `status`, `diff`, `log`, `show`), each invocation leads with
+`--no-optional-locks` so even `git status` cannot refresh the index as a side effect, and
+`GIT_TERMINAL_PROMPT=0` means nothing can block waiting for credentials. There is no code
+path that commits, pushes, pulls, resets, checks out, stashes or cleans, and the allowlist
+is what keeps it that way. Finding the working tree is still a walk up the directory tree
+looking for `.git`, so a workspace outside Git simply has no baseline — a normal state,
+not a failure.

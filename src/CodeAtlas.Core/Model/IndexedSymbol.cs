@@ -36,11 +36,20 @@ public sealed record IndexedSymbol
     public int? Column { get; init; }
 
     /// <summary>
-    /// 1-based last line of the whole declaration, body included, or <c>null</c> when it
-    /// has no source location. Together with <see cref="Line"/> this is the span a diff
-    /// hunk is matched against, which is what turns changed lines into changed symbols.
+    /// 1-based last line of the whole declaration, or <c>null</c> when it has no source
+    /// location.
     /// </summary>
+    /// <remarks>
+    /// <see cref="Line"/> alone locates a declaration; the span is what lets a changed
+    /// line be attributed to the symbol it falls inside. A type's span covers its members,
+    /// so an edit inside a method lands on both the method and the type, which is exactly
+    /// how a reader thinks about it.
+    /// </remarks>
     public int? EndLine { get; init; }
+
+    /// <summary>True when <paramref name="line"/> falls inside this declaration.</summary>
+    public bool Contains(int line) =>
+        Line is { } start && line >= start && line <= (EndLine ?? start);
 
     public string? Accessibility { get; init; }
 

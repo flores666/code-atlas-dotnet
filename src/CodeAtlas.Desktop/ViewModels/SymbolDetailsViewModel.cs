@@ -191,7 +191,42 @@ public sealed class SymbolDetailsViewModel
     /// <summary>Names a capped list so a partial answer never reads as a complete one.</summary>
     private static string Truncatable(string title, int shown, int total) =>
         total > shown ? $"{title} ({shown} of {total})" : title;
+}
 
+/// <summary>
+/// One test over a symbol, wherever it is listed: the details pane, or a row of the
+/// working tree's own changes.
+/// </summary>
+public sealed class RelatedTestViewModel(RelatedTest related)
+{
+    public long SymbolId { get; } = related.Test.SymbolId;
+
+    /// <summary>Fixture and method, the way a runner names a test.</summary>
+    public string Name { get; } = related.Test.QualifiedDisplay;
+
+    /// <summary>Why this test is listed, so the reader can judge a probable one themselves.</summary>
+    public string Reason { get; } = related.Reason;
+
+    /// <summary>
+    /// <c>exact</c> only for an edge the compiler recorded. A naming or layout match is
+    /// always <c>probable</c>, and says so.
+    /// </summary>
+    public string Confidence { get; } = related.IsExact ? "exact" : "probable";
+
+    public bool IsExact { get; } = related.IsExact;
+
+    /// <summary>The framework it runs under, and where it is written.</summary>
+    public string Source { get; } = Framework(related.Test.Framework) +
+        (RowOrigin.Of(related.Test.FilePath, related.Test.Line) is { Length: > 0 } origin
+            ? $" · {origin}"
+            : string.Empty);
+
+    private static string Framework(TestFramework framework) => framework switch
+    {
+        TestFramework.NUnit => "NUnit",
+        TestFramework.MSTest => "MSTest",
+        _ => "xUnit",
+    };
 }
 
 /// <summary>One entry of the recent-workspaces list, bound directly to its command.</summary>
