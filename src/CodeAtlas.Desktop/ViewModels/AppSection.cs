@@ -8,6 +8,7 @@ public enum AppSection
     Search,
     Endpoints,
     Infrastructure,
+    Changes,
     Graph,
     Diagnostics,
 }

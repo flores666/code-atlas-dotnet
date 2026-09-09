@@ -21,6 +21,7 @@ public sealed class IndexWriteSession : IDisposable
     private readonly SqliteTransaction _transaction;
     private readonly SqliteCommand _insertProject;
     private readonly SqliteCommand _insertSymbol;
+    private readonly SqliteCommand _insertProjectReference;
     private readonly SqliteCommand _insertAttribute;
     private readonly SqliteCommand _insertRelation;
     private readonly SqliteCommand _insertDiagnostic;
@@ -49,6 +50,7 @@ public sealed class IndexWriteSession : IDisposable
             DELETE FROM external_dependencies;
             DELETE FROM symbol_attributes;
             DELETE FROM symbols;
+            DELETE FROM project_references;
             DELETE FROM projects;
             DELETE FROM diagnostics;
             DELETE FROM schema_info WHERE key <> 'schema_version';
@@ -70,12 +72,16 @@ public sealed class IndexWriteSession : IDisposable
         _insertSymbol = Prepare(
             """
             INSERT INTO symbols (kind, name, fqn, display, project_id, namespace,
-                                 container_fqn, file_path, line, start_column, accessibility)
+                                 container_fqn, file_path, line, end_line, start_column, accessibility)
             VALUES (@kind, @name, @fqn, @display, @project, @namespace,
-                    @container, @file, @line, @column, @accessibility)
+                    @container, @file, @line, @endLine, @column, @accessibility)
             """,
             "@kind", "@name", "@fqn", "@display", "@project", "@namespace",
-            "@container", "@file", "@line", "@column", "@accessibility");
+            "@container", "@file", "@line", "@endLine", "@column", "@accessibility");
+
+        _insertProjectReference = Prepare(
+            "INSERT INTO project_references (project_id, target_name) VALUES (@project, @target)",
+            "@project", "@target");
 
         _insertAttribute = Prepare(
             "INSERT INTO symbol_attributes (symbol_id, attribute_fqn) VALUES (@symbol, @attribute)",
@@ -198,6 +204,7 @@ public sealed class IndexWriteSession : IDisposable
             Set(_insertSymbol, "@container", symbol.ContainerFullyQualifiedName);
             Set(_insertSymbol, "@file", symbol.FilePath);
             Set(_insertSymbol, "@line", symbol.Line);
+            Set(_insertSymbol, "@endLine", symbol.EndLine);
             Set(_insertSymbol, "@column", symbol.Column);
             Set(_insertSymbol, "@accessibility", symbol.Accessibility);
             _insertSymbol.ExecuteNonQuery();
@@ -214,6 +221,19 @@ public sealed class IndexWriteSession : IDisposable
                 Set(_insertAttribute, "@attribute", attribute);
                 _insertAttribute.ExecuteNonQuery();
             }
+        }
+    }
+
+    /// <summary>Records what a project was built against, by name.</summary>
+    public void AddProjectReferences(long projectId, IEnumerable<string> referencedProjectNames)
+    {
+        ArgumentNullException.ThrowIfNull(referencedProjectNames);
+
+        foreach (var name in referencedProjectNames)
+        {
+            Set(_insertProjectReference, "@project", projectId);
+            Set(_insertProjectReference, "@target", name);
+            _insertProjectReference.ExecuteNonQuery();
         }
     }
 
@@ -524,6 +544,7 @@ public sealed class IndexWriteSession : IDisposable
     {
         _insertProject.Dispose();
         _insertSymbol.Dispose();
+        _insertProjectReference.Dispose();
         _insertAttribute.Dispose();
         _insertRelation.Dispose();
         _insertDiagnostic.Dispose();

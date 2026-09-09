@@ -1,5 +1,6 @@
 using System.Globalization;
 using CodeAtlas.Core.Model;
+using CodeAtlas.Core.Testing;
 using Microsoft.Data.Sqlite;
 
 namespace CodeAtlas.Core.Storage;
@@ -359,6 +360,34 @@ public sealed class SymbolIndexDatabase : IDisposable
         }
     }
 
+    /// <summary>The symbol a fully qualified name identifies, or <c>null</c> when it is outside the index.</summary>
+    private IndexedSymbol? GetSymbolByName(string fullyQualifiedName)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = $"{SelectSymbol} WHERE s.fqn = @fqn LIMIT 1";
+        command.Parameters.AddWithValue("@fqn", fullyQualifiedName);
+
+        return ReadSymbols(command).FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Every declaration in one file, innermost last. This is how a diff is read back into
+    /// the index: a changed line falls inside the span of the symbol it belongs to.
+    /// </summary>
+    public IReadOnlyList<IndexedSymbol> GetSymbolsInFile(string filePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+
+        lock (_gate)
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = $"{SelectSymbol} WHERE s.file_path = @path ORDER BY s.line, s.id";
+            command.Parameters.AddWithValue("@path", filePath);
+
+            return ReadSymbols(command);
+        }
+    }
+
     public SymbolDetails? GetDetails(long id)
     {
         lock (_gate)
@@ -428,6 +457,7 @@ public sealed class SymbolIndexDatabase : IDisposable
 
                 RelatedEndpoints = FindUpstreamEndpoints(id),
                 RelatedServices = FindUpstreamServices(id),
+                RelatedTests = FindRelatedTests(id),
             };
         }
     }
@@ -913,6 +943,348 @@ public sealed class SymbolIndexDatabase : IDisposable
         return ReadLinks(command);
     }
 
+    // ---- tests --------------------------------------------------------------
+
+    /// <summary>How many related tests one symbol reports.</summary>
+    public const int MaxRelatedTests = 50;
+
+    /// <summary>
+    /// The tests that exercise a symbol, best evidence first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Three tiers are compiler-derived and therefore exact: the test names the symbol, the
+    /// fixture constructs the type that declares it, or another member of the fixture names
+    /// it. A fixture's own members count because a test class usually builds its subject
+    /// once — in a constructor, a field, or a setup method — and asserts on it from every
+    /// test in the class.
+    /// </para>
+    /// <para>
+    /// The remaining tiers are read off names, namespaces and project references by
+    /// <see cref="TestNaming"/>, and are never exact. The weakest of them — a fixture that
+    /// merely sits in the same namespace — is a fallback, dropped as soon as anything
+    /// better was found: it would otherwise bury three real answers under thirty
+    /// coincidences.
+    /// </para>
+    /// <para>
+    /// Nothing here follows calls transitively. A test that reaches a service through two
+    /// layers of production code is not listed, for the same reason "reached from" walks
+    /// composition rather than calls: one hot method would put the whole suite in every
+    /// answer.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<RelatedTest> FindRelatedTests(long symbolId, int limit = MaxRelatedTests)
+    {
+        lock (_gate)
+        {
+            if (GetSymbol(symbolId) is not { } symbol || symbol.Kind is IndexedSymbolKind.Namespace)
+            {
+                return [];
+            }
+
+            // A member is tested through the type that declares it; a type is its own
+            // subject, nested or not.
+            var declaringType = IsType(symbol.Kind) || symbol.ContainerFullyQualifiedName is null
+                ? symbol
+                : GetSymbolByName(symbol.ContainerFullyQualifiedName);
+
+            var best = new Dictionary<long, RelatedTest>();
+
+            foreach (var test in FindTestsReferencing(symbol, declaringType))
+            {
+                Keep(best, test);
+            }
+
+            if (declaringType is not null)
+            {
+                foreach (var test in FindTestsNaming(declaringType))
+                {
+                    Keep(best, test);
+                }
+            }
+
+            var results = best.Values.ToList();
+
+            if (results.Exists(test => test.Strategy < TestRelationStrategy.NamespaceSimilarity))
+            {
+                results.RemoveAll(test => test.Strategy == TestRelationStrategy.NamespaceSimilarity);
+            }
+
+            return
+            [
+                .. results
+                    .OrderBy(test => test.Strategy)
+                    .ThenBy(test => test.Test.QualifiedDisplay, StringComparer.OrdinalIgnoreCase)
+                    .Take(limit),
+            ];
+        }
+
+        static void Keep(Dictionary<long, RelatedTest> best, RelatedTest candidate)
+        {
+            if (!best.TryGetValue(candidate.Test.SymbolId, out var existing) ||
+                candidate.Strategy < existing.Strategy)
+            {
+                best[candidate.Test.SymbolId] = candidate;
+            }
+        }
+    }
+
+    private static bool IsType(IndexedSymbolKind kind) =>
+        kind is IndexedSymbolKind.Class or IndexedSymbolKind.Interface or IndexedSymbolKind.Record
+            or IndexedSymbolKind.Struct or IndexedSymbolKind.Enum or IndexedSymbolKind.Delegate;
+
+    /// <summary>
+    /// Every method carrying a recognised test attribute, with the fixture that declares it.
+    /// </summary>
+    /// <remarks>
+    /// Attributes are already indexed against every symbol, so a test needs no analysis of
+    /// its own: this is the whole of "detect test projects and test methods". The framework
+    /// is whichever attribute matched, and a project is a test project exactly when it
+    /// declares one.
+    /// </remarks>
+    private const string TestMethodSource = """
+        SELECT s.id            AS test_id,
+               s.display       AS test_display,
+               s.fqn           AS test_fqn,
+               s.container_fqn AS fixture_fqn,
+               s.file_path     AS test_file,
+               s.line          AS test_line,
+               s.project_id    AS test_project,
+               MIN(a.attribute_fqn) AS framework
+        FROM symbols s
+        JOIN symbol_attributes a ON a.symbol_id = s.id
+        WHERE s.kind = 'Method' AND a.attribute_fqn IN {0}
+        GROUP BY s.id
+        """;
+
+    /// <summary>The exact tiers: what the compiler recorded between a test and the symbol.</summary>
+    private List<RelatedTest> FindTestsReferencing(IndexedSymbol symbol, IndexedSymbol? declaringType)
+    {
+        using var command = _connection.CreateCommand();
+        var attributes = ParameterList(command, "a", TestFrameworks.MethodAttributes);
+
+        command.CommandText = $"""
+            WITH
+            tests AS ({string.Format(CultureInfo.InvariantCulture, TestMethodSource, attributes)}),
+
+            -- What a test can touch that counts: the symbol, and the constructors of the
+            -- type it belongs to, which is how "instantiates the class under test" is
+            -- written in an index that stores construction as a call to a constructor.
+            subjects(id) AS (
+                SELECT @id
+                UNION
+                SELECT id FROM symbols WHERE kind = 'Constructor' AND container_fqn = @type
+            ),
+            touches AS (
+                SELECT r.source_symbol_id AS src,
+                       MAX(r.target_symbol_id =  @id) AS names,
+                       MAX(r.target_symbol_id <> @id) AS constructs
+                FROM relations r
+                WHERE r.target_symbol_id IN (SELECT id FROM subjects)
+                GROUP BY r.source_symbol_id
+            ),
+            sources AS (
+                SELECT t.src, t.names, t.constructs, s.fqn AS src_fqn, s.container_fqn AS src_owner
+                FROM touches t
+                JOIN symbols s ON s.id = t.src
+            )
+            SELECT tests.test_id, tests.test_display, tests.test_fqn, tests.framework,
+                   f.display, f.id, p.name, tests.test_file, tests.test_line,
+                   MIN(CASE WHEN sources.src = tests.test_id AND sources.names = 1 THEN 0
+                            WHEN sources.constructs = 1                            THEN 1
+                            ELSE 2 END) AS strategy
+            FROM tests
+            -- The test itself, a sibling member of its fixture, or the fixture as a whole.
+            JOIN sources ON sources.src       = tests.test_id
+                         OR sources.src_owner = tests.fixture_fqn
+                         OR sources.src_fqn   = tests.fixture_fqn
+            LEFT JOIN symbols  f ON f.fqn = tests.fixture_fqn
+            LEFT JOIN projects p ON p.id  = tests.test_project
+            GROUP BY tests.test_id
+            """;
+
+        command.Parameters.AddWithValue("@id", symbol.Id);
+        command.Parameters.AddWithValue(
+            "@type", declaringType?.FullyQualifiedName ?? symbol.FullyQualifiedName);
+
+        using var reader = command.ExecuteReader();
+        var results = new List<RelatedTest>();
+
+        while (reader.Read())
+        {
+            var strategy = (TestRelationStrategy)reader.GetInt32(9);
+
+            results.Add(new RelatedTest(
+                ReadTest(reader),
+                strategy,
+                strategy is TestRelationStrategy.DirectReference
+                    ? symbol.Display
+                    : declaringType?.Display ?? symbol.Display));
+        }
+
+        return results;
+    }
+
+    /// <summary>The probable tiers: fixtures whose name or place says what they are about.</summary>
+    private List<RelatedTest> FindTestsNaming(IndexedSymbol type)
+    {
+        var dependents = GetDependentProjects(type.ProjectName);
+
+        var fixtures = new Dictionary<string, TestRelationStrategy>(StringComparer.Ordinal);
+        foreach (var fixture in GetTestFixtures())
+        {
+            if (string.Equals(fixture.FullyQualifiedName, type.FullyQualifiedName, StringComparison.Ordinal) ||
+                fixtures.ContainsKey(fixture.FullyQualifiedName))
+            {
+                continue;
+            }
+
+            var reachable = fixture.ProjectName is { } project && dependents.Contains(project);
+
+            if (TestNaming.Match(fixture, type, reachable) is { } strategy)
+            {
+                fixtures[fixture.FullyQualifiedName] = strategy;
+            }
+        }
+
+        return fixtures.Count == 0
+            ? []
+            :
+            [
+                .. GetTestsInFixtures(fixtures.Keys)
+                    .Select(found => new RelatedTest(found.Test, fixtures[found.Fixture], type.Display)),
+            ];
+    }
+
+    /// <summary>Types declaring at least one test method.</summary>
+    private List<IndexedSymbol> GetTestFixtures()
+    {
+        using var command = _connection.CreateCommand();
+        var attributes = ParameterList(command, "a", TestFrameworks.MethodAttributes);
+
+        command.CommandText = $"""
+            {SelectSymbol}
+            WHERE s.fqn IN (
+                SELECT DISTINCT m.container_fqn
+                FROM symbols m
+                JOIN symbol_attributes a ON a.symbol_id = m.id
+                WHERE m.kind = 'Method' AND a.attribute_fqn IN {attributes}
+            )
+            """;
+
+        return ReadSymbols(command);
+    }
+
+    private List<(string Fixture, TestMethod Test)> GetTestsInFixtures(IReadOnlyCollection<string> fixtures)
+    {
+        using var command = _connection.CreateCommand();
+        var attributes = ParameterList(command, "a", TestFrameworks.MethodAttributes);
+        var names = ParameterList(command, "f", fixtures);
+
+        command.CommandText = $"""
+            WITH tests AS ({string.Format(CultureInfo.InvariantCulture, TestMethodSource, attributes)})
+            SELECT tests.test_id, tests.test_display, tests.test_fqn, tests.framework,
+                   f.display, f.id, p.name, tests.test_file, tests.test_line, tests.fixture_fqn
+            FROM tests
+            LEFT JOIN symbols  f ON f.fqn = tests.fixture_fqn
+            LEFT JOIN projects p ON p.id  = tests.test_project
+            WHERE tests.fixture_fqn IN {names}
+            """;
+
+        using var reader = command.ExecuteReader();
+        var results = new List<(string, TestMethod)>();
+
+        while (reader.Read())
+        {
+            results.Add((reader.GetString(9), ReadTest(reader)));
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// The projects that can see a project's types, itself included.
+    /// </summary>
+    /// <remarks>
+    /// Walked backwards over the reference graph so a test project that reaches the
+    /// declaring project through an application project still counts, and matched by name
+    /// because that is how a reference to a project that never loaded is stored.
+    /// </remarks>
+    private HashSet<string> GetDependentProjects(string? projectName)
+    {
+        var dependents = new HashSet<string>(StringComparer.Ordinal);
+
+        if (projectName is null)
+        {
+            return dependents;
+        }
+
+        using var command = _connection.CreateCommand();
+        command.CommandText = """
+            WITH RECURSIVE dependents(name) AS (
+                SELECT @name
+                UNION
+                SELECT p.name
+                FROM project_references r
+                JOIN projects p   ON p.id = r.project_id
+                JOIN dependents d ON d.name = r.target_name
+            )
+            SELECT name FROM dependents
+            """;
+        command.Parameters.AddWithValue("@name", projectName);
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            dependents.Add(reader.GetString(0));
+        }
+
+        return dependents;
+    }
+
+    /// <summary>Reads the nine columns every test query selects, in that order.</summary>
+    private static TestMethod ReadTest(SqliteDataReader reader) => new()
+    {
+        SymbolId = reader.GetInt64(0),
+        Display = reader.GetString(1),
+        FullyQualifiedName = reader.GetString(2),
+        Framework = TestFrameworks.FrameworkOf(reader.GetString(3)),
+        ClassDisplay = reader.IsDBNull(4) ? null : reader.GetString(4),
+        ClassSymbolId = reader.IsDBNull(5) ? null : reader.GetInt64(5),
+        ProjectName = reader.IsDBNull(6) ? null : reader.GetString(6),
+        FilePath = reader.IsDBNull(7) ? null : reader.GetString(7),
+        Line = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+    };
+
+    /// <summary>The projects that declare tests, which is what makes a project a test project.</summary>
+    public IReadOnlyList<string> GetTestProjects()
+    {
+        lock (_gate)
+        {
+            using var command = _connection.CreateCommand();
+            var attributes = ParameterList(command, "a", TestFrameworks.MethodAttributes);
+
+            command.CommandText = $"""
+                SELECT DISTINCT p.name
+                FROM symbols s
+                JOIN symbol_attributes a ON a.symbol_id = s.id
+                JOIN projects p          ON p.id = s.project_id
+                WHERE s.kind = 'Method' AND a.attribute_fqn IN {attributes}
+                ORDER BY p.name
+                """;
+
+            using var reader = command.ExecuteReader();
+            var results = new List<string>();
+
+            while (reader.Read())
+            {
+                results.Add(reader.GetString(0));
+            }
+
+            return results;
+        }
+    }
+
     /// <summary>
     /// A short infrastructure label per symbol, for the graph to badge its nodes with:
     /// the table an entity maps to, the technology a boundary type talks to, or the fact
@@ -1030,7 +1402,7 @@ public sealed class SymbolIndexDatabase : IDisposable
 
     private const string SelectSymbol = """
         SELECT s.id, s.kind, s.name, s.fqn, s.display, p.name, s.namespace,
-               s.container_fqn, s.file_path, s.line, s.start_column, s.accessibility
+               s.container_fqn, s.file_path, s.line, s.start_column, s.accessibility, s.end_line
         FROM symbols s
         LEFT JOIN projects p ON p.id = s.project_id
         """;
@@ -1056,6 +1428,7 @@ public sealed class SymbolIndexDatabase : IDisposable
                 Line = reader.IsDBNull(9) ? null : reader.GetInt32(9),
                 Column = reader.IsDBNull(10) ? null : reader.GetInt32(10),
                 Accessibility = reader.IsDBNull(11) ? null : reader.GetString(11),
+                EndLine = reader.IsDBNull(12) ? null : reader.GetInt32(12),
             });
         }
 

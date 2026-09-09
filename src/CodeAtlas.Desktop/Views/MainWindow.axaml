@@ -203,6 +203,20 @@
                        IsEnabled="{Binding HasWorkspace}"
                        IsChecked="{Binding ActiveSection, Mode=TwoWay,
                                    Converter={StaticResource SectionIs},
+                                   ConverterParameter={x:Static vm:AppSection.Changes}}">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+              <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Changes}" />
+              <TextBlock Grid.Column="1" Text="Changes" Margin="10,0,0,0" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2" Classes="dim" VerticalAlignment="Center"
+                         IsVisible="{Binding HasChanges}"
+                         Text="{Binding ChangeCount}" />
+            </Grid>
+          </RadioButton>
+
+          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
+                       IsEnabled="{Binding HasWorkspace}"
+                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
+                                   Converter={StaticResource SectionIs},
                                    ConverterParameter={x:Static vm:AppSection.Graph}}">
             <StackPanel Orientation="Horizontal" Spacing="10">
               <Path Classes="icon" Data="{DynamicResource Icon.Graph}" />
@@ -784,6 +798,109 @@
             </Border>
           </Grid>
 
+          <!-- Changes: the working tree read against the index, and the tests over it. -->
+          <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16"
+                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
+                            ConverterParameter={x:Static vm:AppSection.Changes}}">
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16">
+              <StackPanel Grid.Column="0" Spacing="4">
+                <TextBlock Classes="title" Text="Changes" TextTrimming="CharacterEllipsis" />
+                <TextBlock Classes="meta" TextTrimming="CharacterEllipsis"
+                           Text="What the working tree changed against HEAD, and the tests that exercise it." />
+              </StackPanel>
+              <Button Grid.Column="1" Theme="{DynamicResource SecondaryButtonTheme}"
+                      VerticalAlignment="Center" Content="Refresh"
+                      Command="{Binding RefreshChangesCommand}" />
+            </Grid>
+
+            <StackPanel Grid.Row="1" Spacing="8">
+              <Border Classes="chip warning" HorizontalAlignment="Left"
+                      IsVisible="{Binding HasUntested}"
+                      ToolTip.Tip="A changed method or constructor of production code that no test was found to reach.">
+                <TextBlock Text="{Binding UntestedSummary}" />
+              </Border>
+              <TextBlock Classes="meta" TextWrapping="Wrap"
+                         IsVisible="{Binding HasChangesNotice}"
+                         Text="{Binding ChangesNotice}" />
+            </StackPanel>
+
+            <Border Grid.Row="2" Classes="card" Padding="10" ClipToBounds="True">
+              <Panel>
+                <ListBox ItemsSource="{Binding Changes}"
+                         SelectedItem="{Binding SelectedChange, Mode=TwoWay}"
+                         Theme="{DynamicResource ResultListTheme}"
+                         ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                         IsVisible="{Binding HasChanges}">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:ChangedSymbolViewModel">
+                      <StackPanel Spacing="6">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                          <Border Grid.Column="0" Classes="glyph" VerticalAlignment="Top"
+                                  Classes.container="{Binding IsContainer}">
+                            <TextBlock Text="{Binding Glyph}" />
+                          </Border>
+                          <StackPanel Grid.Column="1" MinWidth="0">
+                            <TextBlock Text="{Binding Display}" FontWeight="Medium"
+                                       TextTrimming="CharacterEllipsis" />
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                              <TextBlock Grid.Column="0" Text="{Binding Container}" Classes="dim"
+                                         TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
+                                         TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                          </StackPanel>
+                          <Border Grid.Column="2" Classes="chip" VerticalAlignment="Center"
+                                  Classes.warning="{Binding IsUntested}"
+                                  IsVisible="{Binding HasSummary}">
+                            <TextBlock Text="{Binding Summary}" />
+                          </Border>
+                        </Grid>
+
+                        <!-- The tests themselves, indented under the symbol they cover, so
+                             the whole answer reads without a second click. -->
+                        <StackPanel Margin="34,0,0,0" IsVisible="{Binding HasTests}">
+                          <ItemsControl ItemsSource="{Binding Tests}">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate x:DataType="vm:RelatedTestViewModel">
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" Margin="0,2">
+                                  <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top"
+                                          Classes.warning="{Binding !IsExact}">
+                                    <TextBlock Text="{Binding Confidence}" />
+                                  </Border>
+                                  <StackPanel Grid.Column="1" MinWidth="0">
+                                    <TextBlock Text="{Binding Name}" Classes="mono"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Reason}" Classes="caption"
+                                               TextTrimming="CharacterEllipsis" />
+                                  </StackPanel>
+                                </Grid>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                          <TextBlock Classes="caption" Margin="0,2,0,0"
+                                     IsVisible="{Binding HasMore}"
+                                     Text="{Binding MoreSummary}" />
+                        </StackPanel>
+                      </StackPanel>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                            IsVisible="{Binding !HasChanges}">
+                  <TextBlock Text="No changed symbols" Classes="section" HorizontalAlignment="Center" />
+                  <TextBlock Classes="meta" HorizontalAlignment="Center"
+                             TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
+                             Text="Edit a method in this repository and its declarations show up here, with the tests that exercise them." />
+                </StackPanel>
+
+                <ProgressBar Width="160" IsIndeterminate="True"
+                             HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,16,0,0"
+                             IsVisible="{Binding IsAnalysingChanges}" />
+              </Panel>
+            </Border>
+          </Grid>
+
           <!-- Graph -->
           <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16"
                 IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
@@ -1244,6 +1361,33 @@
                             <TextBlock Text="{Binding Route}" Classes="mono"
                                        TextTrimming="CharacterEllipsis" />
                             <TextBlock Text="{Binding Handler}" Classes="caption"
+                                       TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+
+                <!-- What exercises this symbol. Exact is an edge the compiler recorded;
+                     probable was read off names, and says on what grounds. -->
+                <StackPanel Spacing="8" IsVisible="{Binding HasRelatedTests}">
+                  <TextBlock Classes="overline" Text="Related tests" />
+                  <ItemsControl ItemsSource="{Binding RelatedTests}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:RelatedTestViewModel">
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
+                          <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top"
+                                  Classes.warning="{Binding !IsExact}"
+                                  ToolTip.Tip="{Binding Reason}">
+                            <TextBlock Text="{Binding Confidence}" />
+                          </Border>
+                          <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding Name}" FontWeight="Medium"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Reason}" Classes="caption"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Source}" Classes="caption"
                                        TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                         </Grid>

@@ -144,4 +144,10 @@ public sealed record SymbolDetails
 
     /// <summary>Registered services on the path from an endpoint to this symbol.</summary>
     public IReadOnlyList<SymbolLink> RelatedServices { get; init; } = [];
+
+    /// <summary>
+    /// The tests that exercise this symbol, best evidence first. Exact entries are edges
+    /// the compiler recorded; the rest are read off names and project structure.
+    /// </summary>
+    public IReadOnlyList<RelatedTest> RelatedTests { get; init; } = [];
 }
