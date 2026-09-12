@@ -69,10 +69,11 @@ public sealed class GitChangesViewModel : ObservableObject
     public event Action<long>? SymbolSelected;
 
     /// <summary>
-    /// Raised when the changed set is rebuilt, carrying the ids the graph's "Changed code"
-    /// filter narrows to.
+    /// Raised when the working tree has been re-read, carrying what it now differs by:
+    /// the ids the graph's "Changed code" filter narrows to, and the diff a context pack
+    /// is built from.
     /// </summary>
-    public event Action<IReadOnlySet<long>>? ChangedSetUpdated;
+    public event Action<RepositoryChanges>? ChangesUpdated;
 
     public event Action<string>? StatusReported;
 
@@ -402,7 +403,7 @@ public sealed class GitChangesViewModel : ObservableObject
         ApplyFilter();
         RaiseSummary();
 
-        ChangedSetUpdated?.Invoke(changes.SymbolIds);
+        ChangesUpdated?.Invoke(changes);
     }
 
     private async Task LoadHistoryAsync(ChangedFileViewModel file)
@@ -493,7 +494,7 @@ public sealed class GitChangesViewModel : ObservableObject
         DiffText = string.Empty;
         HistoryCaption = "Recent commits";
         ApplyFilter();
-        ChangedSetUpdated?.Invoke(new HashSet<long>());
+        ChangesUpdated?.Invoke(RepositoryChanges.Empty);
     }
 
     private void RaiseSummary()

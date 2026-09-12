@@ -37,6 +37,13 @@ public sealed class ImpactViewModel : ObservableObject
 
     public event Action<HttpEndpoint>? EndpointSelected;
 
+    /// <summary>
+    /// Raised with the report the section is now showing, or <c>null</c> when it has none.
+    /// The walk is expensive enough that anything else wanting the answer should be handed
+    /// the one that was already produced rather than running its own.
+    /// </summary>
+    public event Action<ImpactReport?>? ReportProduced;
+
     public ObservableCollection<ImpactRowViewModel> DirectCallers { get; } = [];
 
     public ObservableCollection<ImpactRowViewModel> IndirectCallers { get; } = [];
@@ -179,6 +186,7 @@ public sealed class ImpactViewModel : ObservableObject
         _report = null;
         Clear();
         Raise();
+        ReportProduced?.Invoke(null);
     }
 
     /// <summary>
@@ -225,6 +233,7 @@ public sealed class ImpactViewModel : ObservableObject
 
             _report = report;
             Load(report);
+            ReportProduced?.Invoke(report);
         }
         catch (OperationCanceledException)
         {

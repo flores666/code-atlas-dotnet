@@ -90,15 +90,15 @@ public class GitChangesViewModelTests
     public void Clears_itself_when_the_workspace_closes()
     {
         var changes = new GitChangesViewModel();
-        var cleared = new List<IReadOnlySet<long>>();
-        changes.ChangedSetUpdated += set => cleared.Add(set);
+        var cleared = new List<RepositoryChanges>();
+        changes.ChangesUpdated += updated => cleared.Add(updated);
 
         changes.SetWorkspace(null);
 
         Assert.False(changes.HasRepository);
         Assert.Empty(changes.Commits);
         Assert.Single(cleared);
-        Assert.Empty(cleared[0]);
+        Assert.Empty(cleared[0].SymbolIds);
     }
 
     [Fact]

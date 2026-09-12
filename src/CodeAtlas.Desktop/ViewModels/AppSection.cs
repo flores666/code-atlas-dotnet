@@ -10,6 +10,7 @@ public enum AppSection
     Infrastructure,
     GitChanges,
     Impact,
+    Context,
     Graph,
     Diagnostics,
 }

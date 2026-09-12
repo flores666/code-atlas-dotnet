@@ -87,15 +87,29 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         // command rather than one entry point per kind: a method or type from the details
         // pane, an endpoint's handler, an entity, or a changed symbol.
         AnalyzeImpactCommand = new RelayCommand(
-            parameter => AnalyzeImpact(ImpactTarget(parameter)),
-            parameter => ImpactTarget(parameter) is not null);
+            parameter => AnalyzeImpact(SymbolTarget(parameter)),
+            parameter => SymbolTarget(parameter) is not null);
 
         Impact.SymbolSelected += id => _ = ShowDetailsAsync(id);
         Impact.EndpointSelected += endpoint => _ = ShowEndpointAsync(new EndpointViewModel(endpoint));
+        Impact.ReportProduced += Context.SetImpact;
 
         GitChanges.SymbolSelected += id => _ = ShowChangedSymbolAsync(id);
-        GitChanges.ChangedSetUpdated += Graph.SetChangedSymbols;
+        GitChanges.ChangesUpdated += changes =>
+        {
+            Graph.SetChangedSymbols(changes.SymbolIds);
+            Context.SetChanges(changes);
+        };
         GitChanges.StatusReported += message => StatusMessage = message;
+
+        // A context pack is assembled out of what the other sections already answered, so
+        // the same starting points feed it: a symbol from anywhere, an endpoint, an impact
+        // report, the working tree's diff.
+        AddToContextCommand = new AsyncRelayCommand(
+            parameter => AddToContextAsync(SymbolTarget(parameter)),
+            parameter => SymbolTarget(parameter) is not null);
+
+        Context.StatusReported += message => StatusMessage = message;
 
         foreach (var path in _recentWorkspaces.Load())
         {
@@ -160,18 +174,25 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>What a change to the selected symbol can affect.</summary>
     public ImpactViewModel Impact { get; } = new();
 
+    /// <summary>The context pack being assembled for an external coding agent.</summary>
+    public ContextPackViewModel Context { get; } = new();
+
     /// <summary>Runs impact analysis on a symbol and shows the result.</summary>
     public RelayCommand AnalyzeImpactCommand { get; }
 
+    /// <summary>Puts a symbol into the context pack and opens the builder on it.</summary>
+    public AsyncRelayCommand AddToContextCommand { get; }
+
     /// <summary>
-    /// The symbol an impact request is about, whatever kind of row it came from.
+    /// The symbol a row stands for, whatever kind of row it came from. Impact analysis and
+    /// the context builder both start from one, and both are reachable from every list.
     /// </summary>
     /// <remarks>
     /// A null parameter means "whatever is selected", which is what the details pane's own
-    /// button passes. An endpoint is analysed through its handler, falling back to the
+    /// buttons pass. An endpoint resolves through its handler, falling back to the
     /// controller that declares it, because that is the symbol its behaviour lives on.
     /// </remarks>
-    private long? ImpactTarget(object? parameter) => parameter switch
+    private long? SymbolTarget(object? parameter) => parameter switch
     {
         EndpointViewModel endpoint =>
             endpoint.Endpoint.HandlerSymbolId ?? endpoint.Endpoint.DeclaringTypeSymbolId,
@@ -194,6 +215,26 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         Impact.Analyze(id);
         ActiveSection = AppSection.Impact;
+    }
+
+    /// <summary>
+    /// Points the context builder at a symbol, puts the symbol itself in the pack, and
+    /// opens the builder — where everything else CodeAtlas knows about it is offered with
+    /// the reason it is relevant.
+    /// </summary>
+    private async Task AddToContextAsync(long? symbolId)
+    {
+        if (_database is not { } database || symbolId is not { } id)
+        {
+            StatusMessage = "That row has no declaration in this solution to add.";
+            return;
+        }
+
+        var symbol = await Task.Run(() => database.GetSymbol(id));
+
+        Context.SetFocus(symbol);
+        Context.Add(ContextItemKind.Symbol);
+        ActiveSection = AppSection.Context;
     }
 
     /// <summary>
@@ -273,6 +314,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         var target = endpoint.Endpoint;
+        Context.SetEndpoint(target);
 
         var (details, seeds) = await Task.Run<(SymbolDetails?, IReadOnlyList<long>)>(() =>
             target.HandlerSymbolId is { } handlerId
@@ -729,6 +771,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 OpenSourceCommand.RaiseCanExecuteChanged();
                 ShowInGraphCommand.RaiseCanExecuteChanged();
                 AnalyzeImpactCommand.RaiseCanExecuteChanged();
+                AddToContextCommand.RaiseCanExecuteChanged();
+
+                // The builder acts on whatever is being looked at, so following a link is
+                // all it takes to change what "add callers" means.
+                Context.SetFocus(value?.Symbol);
             }
         }
     }
@@ -772,6 +819,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             : "Not inside a Git repository";
         OnPropertyChanged(nameof(HasGitRepository));
         GitChanges.SetWorkspace(target);
+        Context.SetWorkspace(target);
         ActiveSection = AppSection.Overview;
 
         RecentWorkspaces.Clear();
@@ -905,6 +953,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         Graph.SetDatabase(_database);
 
         Impact.SetDatabase(_database);
+
+        // A pack is about one index: its entries name row ids, and a rebuild can move
+        // them. Handing over the new index starts a new pack rather than keeping one whose
+        // contents may no longer mean what they did.
+        Context.SetDatabase(_database);
 
         // Re-read Git against the index that has just become current: a reindex can move
         // every declaration's recorded span, and the changed set is derived from those.
@@ -1106,6 +1159,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         Graph.SetDatabase(null);
         Impact.SetDatabase(null);
         GitChanges.SetWorkspace(null);
+        Context.SetWorkspace(null);
         _database?.Dispose();
         _database = null;
 
