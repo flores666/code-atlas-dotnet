@@ -255,6 +255,20 @@
                        IsEnabled="{Binding HasWorkspace}"
                        IsChecked="{Binding ActiveSection, Mode=TwoWay,
                                    Converter={StaticResource SectionIs},
+                                   ConverterParameter={x:Static vm:AppSection.Context}}">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+              <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Context}" />
+              <TextBlock Grid.Column="1" Text="Context" Margin="10,0,0,0" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2" Classes="dim" VerticalAlignment="Center"
+                         IsVisible="{Binding Context.HasItems}"
+                         Text="{Binding Context.Items.Count}" />
+            </Grid>
+          </RadioButton>
+
+          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
+                       IsEnabled="{Binding HasWorkspace}"
+                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
+                                   Converter={StaticResource SectionIs},
                                    ConverterParameter={x:Static vm:AppSection.Graph}}">
             <StackPanel Orientation="Horizontal" Spacing="10">
               <Path Classes="icon" Data="{DynamicResource Icon.Graph}" />
@@ -1415,6 +1429,289 @@
             </Panel>
           </Grid>
 
+          <!-- Context -->
+          <!-- Three columns of one question each: what goes in, what it costs, and exactly
+               what would be exported. Nothing here contacts anything; a pack is assembled
+               locally and handed to an agent by hand. -->
+          <Grid RowDefinitions="Auto,*" RowSpacing="16"
+                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
+                            ConverterParameter={x:Static vm:AppSection.Context}}">
+
+            <StackPanel Grid.Row="0" Spacing="4">
+              <TextBlock Classes="title" Text="Context pack" />
+              <TextBlock Classes="meta" TextWrapping="Wrap"
+                         Text="A focused bundle of what CodeAtlas already knows, for pasting into an external coding agent. Every entry says why it is in the pack, source appears once, and nothing leaves this machine." />
+            </StackPanel>
+
+            <Grid Grid.Row="1" ColumnDefinitions="360,*" ColumnSpacing="16"
+                  DataContext="{Binding Context}" x:DataType="vm:ContextPackViewModel">
+
+              <!-- What can go in. -->
+              <ScrollViewer Grid.Column="0" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="16">
+
+                  <Border Classes="card" Padding="14">
+                    <StackPanel Spacing="8">
+                      <TextBlock Classes="overline" Text="Task" />
+                      <TextBox AcceptsReturn="True" MinHeight="88" MaxHeight="160"
+                               TextWrapping="Wrap"
+                               PlaceholderText="What should the agent do? This is written into Task.md."
+                               Text="{Binding TaskText, Mode=TwoWay}" />
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="card" Padding="14">
+                    <StackPanel Spacing="10">
+                      <TextBlock Classes="overline" Text="Add" />
+                      <TextBlock Text="{Binding FocusTitle}" Classes="strong"
+                                 TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding FocusSubtitle}" Classes="meta mono"
+                                 TextWrapping="Wrap" />
+                      <WrapPanel>
+                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
+                                Content="Symbol"
+                                ToolTip.Tip="The declaration itself, with the file it is written in"
+                                Command="{Binding AddCommand}"
+                                CommandParameter="{x:Static model:ContextItemKind.Symbol}" />
+                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
+                                Content="Source file"
+                                ToolTip.Tip="The whole file the selected symbol is declared in"
+                                Command="{Binding AddCommand}"
+                                CommandParameter="{x:Static model:ContextItemKind.SourceFile}" />
+                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
+                                Content="Callers"
+                                Command="{Binding AddCommand}"
+                                CommandParameter="{x:Static model:ContextItemKind.Callers}" />
+                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
+                                Content="Implementations"
+                                Command="{Binding AddCommand}"
+                                CommandParameter="{x:Static model:ContextItemKind.Implementations}" />
+                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
+                                Content="Dependencies"
+                                ToolTip.Tip="What it calls, is constructed with, and names in its signature"
+                                Command="{Binding AddCommand}"
+                                CommandParameter="{x:Static model:ContextItemKind.Dependencies}" />
+                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
+                                Content="Related tests"
+                                Command="{Binding AddCommand}"
+                                CommandParameter="{x:Static model:ContextItemKind.RelatedTests}" />
+                      </WrapPanel>
+
+                      <Border Classes="divider" />
+
+                      <WrapPanel>
+                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
+                                Content="Endpoint flow"
+                                ToolTip.Tip="{Binding EndpointTitle}"
+                                Command="{Binding AddCommand}"
+                                CommandParameter="{x:Static model:ContextItemKind.EndpointFlow}" />
+                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
+                                Content="Impact summary"
+                                ToolTip.Tip="{Binding ImpactTitle}"
+                                Command="{Binding AddCommand}"
+                                CommandParameter="{x:Static model:ContextItemKind.Impact}" />
+                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
+                                Content="Git diff"
+                                ToolTip.Tip="The working tree's diff against its Git baseline"
+                                Command="{Binding AddCommand}"
+                                CommandParameter="{x:Static model:ContextItemKind.GitDiff}" />
+                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
+                                Content="Architecture"
+                                ToolTip.Tip="Projects, container wiring, persistence and external boundaries"
+                                Command="{Binding AddCommand}"
+                                CommandParameter="{x:Static model:ContextItemKind.Architecture}" />
+                      </WrapPanel>
+                    </StackPanel>
+                  </Border>
+
+                  <!-- Suggestions carry their reason on the row: a pack nobody can audit
+                       is not one worth handing on. -->
+                  <Border Classes="card" Padding="14" IsVisible="{Binding HasSuggestions}">
+                    <StackPanel Spacing="10">
+                      <TextBlock Classes="overline" Text="Suggested" />
+                      <TextBlock Classes="dimmer" TextWrapping="Wrap"
+                                 Text="Everything CodeAtlas found about the current selection, with the reason it is relevant and what it would cost." />
+                      <ItemsControl ItemsSource="{Binding Suggestions}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ContextSuggestionViewModel">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,5">
+                              <StackPanel Grid.Column="0" MinWidth="0">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                  <Border Classes="chip">
+                                    <TextBlock Text="{Binding Kind}" />
+                                  </Border>
+                                  <TextBlock Text="{Binding Title}" Classes="strong"
+                                             VerticalAlignment="Center"
+                                             TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding Reason}" Classes="meta"
+                                           TextWrapping="Wrap" Margin="0,3,0,0" />
+                                <TextBlock Text="{Binding CostSummary}" Classes="caption" />
+                              </StackPanel>
+                              <Button Grid.Column="1" VerticalAlignment="Center"
+                                      Theme="{DynamicResource SecondaryButtonTheme}"
+                                      Content="Add"
+                                      Command="{Binding $parent[ItemsControl].((vm:ContextPackViewModel)DataContext).AddSuggestionCommand}"
+                                      CommandParameter="{Binding}" />
+                            </Grid>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+              </ScrollViewer>
+
+              <!-- What is in it, what it costs, and exactly what would be written. -->
+              <Grid Grid.Column="1" RowDefinitions="Auto,Auto,*" RowSpacing="16">
+
+                <Border Grid.Row="0" Classes="card" Padding="14">
+                  <StackPanel Spacing="10">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                      <TextBlock Grid.Column="0" Classes="overline" Text="Budget" VerticalAlignment="Center" />
+                      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <TextBlock Classes="meta" VerticalAlignment="Center" Text="Max tokens" />
+                        <TextBox Theme="{DynamicResource SearchBoxTheme}" Width="120"
+                                 PlaceholderText="none"
+                                 Text="{Binding BudgetText, Mode=TwoWay}" />
+                      </StackPanel>
+                    </Grid>
+
+                    <WrapPanel>
+                      <Border Classes="tile" Margin="0,0,10,0" Padding="14,10" MinWidth="150">
+                        <StackPanel>
+                          <TextBlock Text="{Binding CharactersText}" Classes="value" />
+                          <TextBlock Text="characters" Classes="caption" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="tile" Margin="0,0,10,0" Padding="14,10" MinWidth="150">
+                        <StackPanel>
+                          <TextBlock Text="{Binding LinesText}" Classes="value" />
+                          <TextBlock Text="lines" Classes="caption" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="tile" Margin="0,0,10,0" Padding="14,10" MinWidth="150">
+                        <StackPanel>
+                          <TextBlock Text="{Binding TokensText}" Classes="value" />
+                          <TextBlock Text="estimated tokens" Classes="caption" />
+                        </StackPanel>
+                      </Border>
+                    </WrapPanel>
+
+                    <ProgressBar Height="6" Minimum="0" Maximum="1"
+                                 IsVisible="{Binding HasBudget}"
+                                 Value="{Binding BudgetFraction}" />
+                    <TextBlock Classes="dimmer" Text="{Binding BudgetSummary}" />
+                    <TextBlock Classes="caption"
+                               Text="Tokens are estimated at one per four characters; CodeAtlas has no tokenizer and asks no service for one." />
+                    <Border Classes="chip error" HorizontalAlignment="Left"
+                            IsVisible="{Binding IsOverBudget}">
+                      <TextBlock Text="{Binding OverBudgetNotice}" />
+                    </Border>
+                  </StackPanel>
+                </Border>
+
+                <Border Grid.Row="1" Classes="card" Padding="10">
+                  <StackPanel Spacing="8">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Grid.Column="0" Classes="overline" Text="In the pack"
+                                 VerticalAlignment="Center" />
+                      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <Button Theme="{DynamicResource GhostButtonTheme}" Content="Remove"
+                                Command="{Binding RemoveCommand}"
+                                CommandParameter="{Binding SelectedItem}" />
+                        <Button Theme="{DynamicResource GhostButtonTheme}" Content="Empty"
+                                Command="{Binding ClearCommand}" />
+                      </StackPanel>
+                    </Grid>
+
+                    <TextBlock Classes="dimmer" IsVisible="{Binding !HasItems}" TextWrapping="Wrap"
+                               Text="Nothing added yet. Pick something on the left, or take one of the suggestions." />
+
+                    <ListBox ItemsSource="{Binding Items}"
+                             SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
+                             Theme="{DynamicResource ResultListTheme}"
+                             ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                             MaxHeight="220"
+                             IsVisible="{Binding HasItems}">
+                      <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ContextItemViewModel">
+                          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                            <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top">
+                              <TextBlock Text="{Binding Kind}" />
+                            </Border>
+                            <StackPanel Grid.Column="1" MinWidth="0">
+                              <TextBlock Text="{Binding Title}" Classes="strong"
+                                         TextTrimming="CharacterEllipsis" />
+                              <TextBlock Text="{Binding Reason}" Classes="caption"
+                                         TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+                              <TextBlock Text="{Binding Destination}" Classes="caption mono" />
+                              <TextBlock Text="{Binding FileSummary}" Classes="caption"
+                                         HorizontalAlignment="Right"
+                                         IsVisible="{Binding HasFiles}" />
+                            </StackPanel>
+                          </Grid>
+                        </DataTemplate>
+                      </ListBox.ItemTemplate>
+                    </ListBox>
+                  </StackPanel>
+                </Border>
+
+                <!-- The preview is the export: the same rendered files, verbatim. -->
+                <Border Grid.Row="2" Classes="card" Padding="10">
+                  <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8">
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                      <TextBlock Grid.Column="0" Classes="overline" Text="Preview"
+                                 VerticalAlignment="Center" />
+                      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <Button Name="ContextCopyButton" Theme="{DynamicResource SecondaryButtonTheme}"
+                                Content="Copy" IsEnabled="{Binding HasItems}"
+                                ToolTip.Tip="Copy the whole pack to the clipboard" />
+                        <Button Name="ContextExportFolderButton" Theme="{DynamicResource SecondaryButtonTheme}"
+                                Content="Export folder" IsEnabled="{Binding HasItems}" />
+                        <Button Name="ContextExportZipButton" Theme="{DynamicResource SecondaryButtonTheme}"
+                                Content="Export zip" IsEnabled="{Binding HasItems}" />
+                      </StackPanel>
+                    </Grid>
+
+                    <TextBlock Grid.Row="1" Classes="dimmer" TextWrapping="Wrap"
+                               Text="The pack is a folder. Pick a file to read exactly what would be written into it." />
+
+                    <!-- One file at a time: the whole pack in one box would be a hundred
+                         kilobytes of text re-laid-out on every keystroke, and a folder is
+                         read a file at a time anyway. -->
+                    <Grid Grid.Row="2" ColumnDefinitions="260,*" ColumnSpacing="10">
+                      <ListBox Grid.Column="0" ItemsSource="{Binding PreviewFiles}"
+                               SelectedItem="{Binding SelectedPreviewFile, Mode=TwoWay}"
+                               Theme="{DynamicResource ResultListTheme}"
+                               ItemContainerTheme="{DynamicResource ResultRowTheme}">
+                        <ListBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:ContextPackFileViewModel">
+                            <StackPanel MinWidth="0">
+                              <TextBlock Text="{Binding Path}" Classes="mono"
+                                         TextTrimming="CharacterEllipsis" />
+                              <TextBlock Text="{Binding Summary}" Classes="caption"
+                                         TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                          </DataTemplate>
+                        </ListBox.ItemTemplate>
+                      </ListBox>
+
+                      <TextBox Grid.Column="1" Classes="mono" IsReadOnly="True"
+                               AcceptsReturn="True" TextWrapping="NoWrap"
+                               VerticalContentAlignment="Top"
+                               IsVisible="{Binding HasPreview}"
+                               FontSize="{DynamicResource FontSizeSmall}"
+                               Text="{Binding PreviewText}" />
+                    </Grid>
+                  </Grid>
+                </Border>
+              </Grid>
+            </Grid>
+          </Grid>
+
           <!-- Graph -->
           <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16"
                 IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
@@ -1738,9 +2035,14 @@
                     <!-- The starting point for a method, a type or an interface: whatever
                          the details pane is currently showing. -->
                     <Button Theme="{DynamicResource SecondaryButtonTheme}"
-                            Content="Impact" Margin="0,0,0,4"
+                            Content="Impact" Margin="0,0,8,4"
                             ToolTip.Tip="What a change to this symbol can affect"
                             Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).AnalyzeImpactCommand}" />
+
+                    <Button Theme="{DynamicResource SecondaryButtonTheme}"
+                            Content="Add to context" Margin="0,0,0,4"
+                            ToolTip.Tip="Start a context pack for an external coding agent from this symbol"
+                            Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).AddToContextCommand}" />
                   </WrapPanel>
                 </StackPanel>
 

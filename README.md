@@ -4,17 +4,19 @@ A local-first, read-only semantic explorer for C#/.NET solutions. It loads a sol
 Roslyn, indexes the declarations and exact semantic relations into a local SQLite file, and
 lets you search, inspect and map them offline.
 
-**MVP 6** — the semantic code map, how an ASP.NET Core application is composed, where it
+**MVP 7** — the semantic code map, how an ASP.NET Core application is composed, where it
 meets everything outside itself, how it differs from its Git baseline, what a change to any
-of it can affect, and which tests hold it in place. Declarations, calls, references,
-implementations, inheritance and type dependencies; a bounded graph of the neighbourhood
-around any symbol; DI registrations and the HTTP endpoints they are wired behind; the EF
-Core model and what reads and writes it; configuration keys and the options types they
-bind; the infrastructure boundaries the application crosses; the working tree's own changes
-mapped onto the symbols they touch; deterministic impact analysis over all of it; and the
-xUnit, NUnit and MSTest tests that exercise any symbol, including the ones the working tree
-has just changed. No runtime tracing or coverage, Kubernetes analysis, message-broker
-topology, AI, embeddings or context export.
+of it can affect, which tests hold it in place, and a context pack assembled out of all of
+it for an external coding agent. Declarations, calls, references, implementations,
+inheritance and type dependencies; a bounded graph of the neighbourhood around any symbol;
+DI registrations and the HTTP endpoints they are wired behind; the EF Core model and what
+reads and writes it; configuration keys and the options types they bind; the infrastructure
+boundaries the application crosses; the working tree's own changes mapped onto the symbols
+they touch; deterministic impact analysis over all of it; the xUnit, NUnit and MSTest tests
+that exercise any symbol, including the ones the working tree has just changed; and a
+budgeted, previewable bundle of any of that, exported to the clipboard, a folder or a zip.
+No runtime tracing or coverage, Kubernetes analysis, message-broker topology, MCP server,
+AI or embeddings — and no cloud provider is contacted at any point.
 
 ## Running
 
@@ -114,10 +116,48 @@ Three tiers are compiler-derived and so exact — the test names the symbol, the
 constructs the type that declares it, or another member of the fixture names it. The rest
 are read off names, namespaces and project references, and never claim to be exact.
 
+**Context** turns any of that into a pack you can hand to Claude, Codex or anything else.
+Describe the task, then take what is relevant: the symbol itself, its whole file, its
+callers, implementations, dependencies or tests, an endpoint's flow, the working tree's
+diff, an impact summary, or the architecture summary CodeAtlas already holds. Whatever is
+selected is also offered as a suggestion, with the reason it is relevant and what it would
+cost:
+
 ```
-dotnet test              # 271 tests, including a real end-to-end indexing run,
-                         # change mapping against a real Git working tree, and the
-                         # tests found over what that change touched
+Related tests   Tests over UserService            ~1,900 tokens · 1 file
+                2 tests exercise it, all on edges the compiler recorded.
+
+Callers         Callers of Get(int id)            ~2,400 tokens · 1 file
+                1 member calls it directly.
+
+Impact          Impact of IUserService            ~700 tokens
+                14 symbols can be affected, up to 3 hop(s) away; risk reads as moderate.
+```
+
+The pack is measured in characters, lines and estimated tokens against a budget you set,
+and an entry that would take it past that budget is refused and says so. Before exporting,
+every file of it can be read exactly as it will be written:
+
+```
+ContextPack/
+  Task.md                              what to do, and why every entry is in the pack
+  Architecture.md                      projects, wiring, persistence, boundaries
+  ExecutionFlow.md                     endpoint flows, callers, dependencies
+  Impact.md                            what a change can affect
+  GitDiff.patch                        the working tree's own diff
+  RelevantFiles/Shop/UserService.cs
+  RelatedTests/Tests/UserServiceTests.cs
+```
+
+**Copy** puts the whole thing on the clipboard, **Export folder** writes that tree where you
+point it, and **Export zip** writes the same tree as an archive. No model is called, nothing
+is uploaded, and the analysed repository is still only ever read.
+
+```
+dotnet test              # 309 tests, including a real end-to-end indexing run,
+                         # change mapping against a real Git working tree, the
+                         # tests found over what that change touched, and a context
+                         # pack assembled and exported from a real index
 ```
 
 Requires the .NET 10 SDK at run time: Roslyn loads projects through the SDK's MSBuild.
@@ -388,6 +428,36 @@ to follow, which is why it is a node restriction on the walk rather than a
 traverses the whole neighbourhood and merely declines to admit what falls outside the set —
 so two changed symbols joined through unchanged code still both appear — and the chip is
 only offered while there is a changed set to filter by.
+
+**A context pack carries source code exactly once.** Entries describe relations in names
+and locations — `CheckoutService.Complete()` at `CheckoutService.cs:41` — and the files
+themselves sit under `RelevantFiles/` and `RelatedTests/`, one copy each however many
+entries asked for them. That is the whole reason a pack is smaller than the sum of what
+went into it, and it is enforced when the pack is rendered rather than left to whoever adds
+the entries. `GitDiff.patch` is the one place code is quoted, because a patch is the change
+rather than the file, and it is written without a Markdown wrapper so it still applies.
+
+**The budget is a refusal, not a trim.** An entry that would take the pack past the ceiling
+is not added, and the message says by how much. Trimming content to fit would leave a pack
+that is not what its manifest says it is, and overrunning quietly would defeat the point of
+a budget. Lowering the budget under a pack that is already larger is the one way to be over
+it, and the section says so rather than pretending otherwise. Tokens are estimated at one
+per four characters and are labelled as estimates everywhere they appear: there is no
+tokenizer here, and asking a service for one would mean sending the code away.
+
+**Task.md is the manifest.** Every entry is listed with the reason it was included, whether
+it was chosen by hand or taken from a suggestion. A pack a developer cannot audit is one
+they cannot responsibly hand on, and the reason is the only part of a pack that a reader
+cannot reconstruct from the files themselves.
+
+**The preview is the export.** The same rendered files are what the size is measured on,
+what the preview shows and what is written to disk, so the number on screen, the text in
+the pane and the bytes in the zip cannot drift apart. They are read a file at a time,
+because a pack is a folder.
+
+**A pack belongs to one index.** Its entries name row ids, and a rebuild can move them, so
+handing the builder a new index starts a new pack rather than keeping entries whose contents
+may no longer mean what they did.
 
 **Impact is two closures, not one.** "Who calls this" and "what does this touch" are
 different questions, and answering them with one walk would overstate both. The call

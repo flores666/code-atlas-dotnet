@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using CodeAtlas.Core.Workspace;
@@ -24,6 +25,10 @@ public sealed partial class MainWindow : Window
         GraphZoomInButton.Click += (_, _) => GraphSurface.ZoomIn();
         GraphZoomOutButton.Click += (_, _) => GraphSurface.ZoomOut();
         GraphFitButton.Click += (_, _) => GraphSurface.ResetView();
+
+        ContextCopyButton.Click += OnContextCopyClicked;
+        ContextExportFolderButton.Click += OnContextExportFolderClicked;
+        ContextExportZipButton.Click += OnContextExportZipClicked;
     }
 
     /// <summary>Ctrl+K puts the caret in the global search box, as the hint in it promises.</summary>
@@ -87,6 +92,55 @@ public sealed partial class MainWindow : Window
         if (items.Count > 0 && items[0].TryGetLocalPath() is { } path)
         {
             await _viewModel.OpenAsync(path);
+        }
+    }
+
+    /// <summary>
+    /// The clipboard and the pickers are properties of the window, which is why the
+    /// context pack is handed out from here: the view model renders it, and the window
+    /// puts it where the reader asked for it. Nothing is sent anywhere.
+    /// </summary>
+    private async void OnContextCopyClicked(object? sender, RoutedEventArgs e)
+    {
+        var context = _viewModel.Context;
+
+        if (Clipboard is not { } clipboard)
+        {
+            context.Report("This platform has no clipboard; export the pack to a folder instead.");
+            return;
+        }
+
+        await clipboard.SetTextAsync(context.BuildText());
+        context.Report("Copied the context pack to the clipboard.");
+    }
+
+    private async void OnContextExportFolderClicked(object? sender, RoutedEventArgs e)
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Where should the ContextPack folder be written?",
+            AllowMultiple = false,
+        });
+
+        if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } path)
+        {
+            _viewModel.Context.ExportToDirectory(path);
+        }
+    }
+
+    private async void OnContextExportZipClicked(object? sender, RoutedEventArgs e)
+    {
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Save the context pack",
+            SuggestedFileName = "ContextPack.zip",
+            DefaultExtension = "zip",
+            FileTypeChoices = [new FilePickerFileType("Zip archive") { Patterns = ["*.zip"] }],
+        });
+
+        if (file?.TryGetLocalPath() is { } path)
+        {
+            _viewModel.Context.ExportToZip(path);
         }
     }
 
