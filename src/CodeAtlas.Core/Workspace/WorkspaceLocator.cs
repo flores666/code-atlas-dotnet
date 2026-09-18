@@ -136,7 +136,6 @@ public static class WorkspaceLocator
             Kind = isProject ? WorkspaceTargetKind.Project : WorkspaceTargetKind.Solution,
             Path = fullPath,
             DisplayName = Path.GetFileNameWithoutExtension(fullPath),
-            GitRoot = GitRepositoryDetector.FindRepositoryRoot(fullPath),
         };
     }
 }

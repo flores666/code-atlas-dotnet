@@ -2,99 +2,100 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:CodeAtlas.Desktop.ViewModels"
         xmlns:views="using:CodeAtlas.Desktop.Views"
-        xmlns:controls="using:CodeAtlas.Desktop.Controls"
         xmlns:model="using:CodeAtlas.Core.Model"
+        xmlns:editor="using:AvaloniaEdit"
         x:Class="CodeAtlas.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="CodeAtlas.NET"
-        Width="1360" Height="880"
-        MinWidth="980" MinHeight="640"
+        Width="1600" Height="980"
+        MinWidth="1080" MinHeight="680"
         Background="{DynamicResource CanvasBrush}"
         Foreground="{DynamicResource TextPrimaryBrush}">
 
   <Window.Resources>
-    <views:EnumEqualsConverter x:Key="SectionIs" />
-
-    <!-- Shared by every impacted-symbol list, which differ only in what they mean rather
-         than in how a row reads. The hop count travels with the row so a transitive
-         effect is never presented as though it were a direct one. -->
-    <DataTemplate x:Key="ImpactRowTemplate" x:DataType="vm:ImpactRowViewModel">
-      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
-        <Border Grid.Column="0" Classes="glyph" Classes.container="{Binding IsContainer}"
-                VerticalAlignment="Center">
-          <TextBlock Text="{Binding Glyph}" />
-        </Border>
-        <StackPanel Grid.Column="1" MinWidth="0">
-          <TextBlock Text="{Binding Display}" Classes="strong" TextTrimming="CharacterEllipsis" />
-          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
-            <TextBlock Grid.Column="0" Text="{Binding Container}" Classes="dim"
-                       TextTrimming="CharacterEllipsis" />
-            <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
-                       TextTrimming="CharacterEllipsis" />
-          </Grid>
-        </StackPanel>
-        <TextBlock Grid.Column="2" Text="{Binding Kind}" Classes="dimmer"
-                   VerticalAlignment="Center" />
-        <Border Grid.Column="3" Classes="chip" VerticalAlignment="Center"
-                ToolTip.Tip="Shortest distance through the dependency graph">
-          <TextBlock Text="{Binding DistanceText}" />
-        </Border>
-      </Grid>
-    </DataTemplate>
+    <views:EnumEqualsConverter x:Key="Is" />
   </Window.Resources>
 
   <DockPanel>
 
-    <!-- Top bar -->
+    <!-- Title bar. The solution name in the middle is the picker: the solutions opened
+         before, then the file and folder pickers that add to them. -->
 
     <Border DockPanel.Dock="Top"
             Height="{DynamicResource TopBarHeight}"
             Background="{DynamicResource SurfaceBrush}"
             BorderBrush="{DynamicResource DividerBrush}"
             BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="16,0">
+      <Grid ColumnDefinitions="Auto,*,Auto" Margin="20,0">
 
         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
           <Border Classes="glyph container large">
-            <TextBlock Text="CA" />
+            <Path Classes="icon" Data="{DynamicResource Icon.Code}" Width="15" Height="15" />
           </Border>
-          <TextBlock Text="CodeAtlas" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <TextBlock Text="CodeAtlas" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
           <Border Classes="chip">
             <TextBlock Text=".NET" />
           </Border>
+          <TextBlock Classes="meta" Margin="8,0,0,0" VerticalAlignment="Center"
+                     Text="Index a solution. Trace what an endpoint runs." />
         </StackPanel>
 
-        <Border Grid.Column="1" Classes="tile" Margin="20,0,0,0" Padding="12,6"
-                VerticalAlignment="Center" MaxWidth="260"
-                IsVisible="{Binding HasWorkspace}"
-                ToolTip.Tip="{Binding WorkspacePath}">
-          <StackPanel>
-            <TextBlock Text="{Binding WorkspaceTitle}" FontWeight="Medium"
-                       TextTrimming="CharacterEllipsis" />
-            <TextBlock Text="{Binding WorkspacePath}" Classes="caption"
-                       TextTrimming="CharacterEllipsis" />
-          </StackPanel>
-        </Border>
+        <Button Grid.Column="1" Name="WorkspaceButton"
+                Theme="{DynamicResource SecondaryButtonTheme}"
+                Padding="14,7" MinWidth="280" MaxWidth="420"
+                HorizontalAlignment="Center" VerticalAlignment="Center"
+                HorizontalContentAlignment="Stretch"
+                ToolTip.Tip="Choose a solution">
+          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+            <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Project}"
+                  Width="15" Height="15" />
+            <StackPanel Grid.Column="1" MinWidth="0" VerticalAlignment="Center">
+              <TextBlock Text="{Binding WorkspaceTitle}" FontWeight="Medium"
+                         TextTrimming="CharacterEllipsis" />
+              <TextBlock Text="{Binding WorkspacePath}" Classes="caption"
+                         TextTrimming="CharacterEllipsis"
+                         IsVisible="{Binding HasWorkspace}" />
+            </StackPanel>
+            <Path Grid.Column="2" Classes="icon" Data="{DynamicResource Icon.Chevron}"
+                  Width="14" Height="14" />
+          </Grid>
+          <Button.Flyout>
+            <Flyout Placement="BottomEdgeAlignedLeft">
+              <StackPanel Width="320" Spacing="2">
+                <TextBlock Classes="overline" Text="Recent" Margin="8,4"
+                           IsVisible="{Binding HasRecentWorkspaces}" />
+                <ItemsControl ItemsSource="{Binding RecentWorkspaces}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:RecentWorkspaceViewModel">
+                      <Button Theme="{DynamicResource GhostButtonTheme}"
+                              HorizontalAlignment="Stretch"
+                              Command="{Binding OpenCommand}"
+                              CommandParameter="{Binding Path}"
+                              ToolTip.Tip="{Binding Path}">
+                        <StackPanel MinWidth="0">
+                          <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                          <TextBlock Text="{Binding Directory}" Classes="caption"
+                                     TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                      </Button>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Border Classes="divider" Margin="0,4" />
+                <Button Name="OpenFileButton"
+                        Theme="{DynamicResource GhostButtonTheme}"
+                        HorizontalAlignment="Stretch"
+                        Content="Solution or project file…" />
+                <Button Name="OpenFolderButton"
+                        Theme="{DynamicResource GhostButtonTheme}"
+                        HorizontalAlignment="Stretch"
+                        Content="Repository folder…" />
+              </StackPanel>
+            </Flyout>
+          </Button.Flyout>
+        </Button>
 
-        <TextBox Grid.Column="2" Name="SearchBox"
-                 Theme="{DynamicResource SearchBoxTheme}"
-                 MaxWidth="520" Margin="24,0"
-                 HorizontalAlignment="Stretch"
-                 VerticalAlignment="Center"
-                 PlaceholderText="Search symbols by name"
-                 IsEnabled="{Binding HasWorkspace}"
-                 Text="{Binding SearchText, Mode=TwoWay}">
-          <TextBox.InnerLeftContent>
-            <Path Classes="icon" Data="{DynamicResource Icon.Search}" Width="14" Height="14" />
-          </TextBox.InnerLeftContent>
-          <TextBox.InnerRightContent>
-            <Border Classes="chip" Margin="6,0,0,0">
-              <TextBlock Text="Ctrl K" />
-            </Border>
-          </TextBox.InnerRightContent>
-        </TextBox>
-
-        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
           <Button Theme="{DynamicResource SecondaryButtonTheme}"
                   Command="{Binding ReindexCommand}"
                   IsVisible="{Binding HasWorkspace}"
@@ -109,26 +110,50 @@
                   Content="Cancel"
                   Command="{Binding CancelIndexingCommand}"
                   IsVisible="{Binding IsIndexing}" />
-
-          <Button Name="OpenButton" Theme="{DynamicResource PrimaryButtonTheme}" Content="Open">
-            <Button.Flyout>
-              <Flyout Placement="BottomEdgeAlignedRight">
-                <StackPanel Width="220">
-                  <Button Name="OpenFileButton"
-                          Theme="{DynamicResource GhostButtonTheme}"
-                          HorizontalAlignment="Stretch"
-                          Content="Solution or project file…" />
-                  <Button Name="OpenFolderButton"
-                          Theme="{DynamicResource GhostButtonTheme}"
-                          HorizontalAlignment="Stretch"
-                          Content="Repository folder…" />
-                </StackPanel>
-              </Flyout>
-            </Button.Flyout>
-          </Button>
         </StackPanel>
       </Grid>
     </Border>
+
+    <!-- The projects of the open solution. Selecting one scopes the explorer and the
+         endpoint list to it; the solution's own card is what "all of them" is. -->
+
+    <StackPanel DockPanel.Dock="Top" Margin="20,18,20,0" Spacing="12"
+                IsVisible="{Binding HasProjects}">
+      <StackPanel Orientation="Horizontal" Spacing="12">
+        <TextBlock Text="Solution projects" FontSize="15" FontWeight="SemiBold" />
+        <TextBlock Classes="meta" VerticalAlignment="Center"
+                   Text="Select one to scope the explorer and the endpoints to it" />
+      </StackPanel>
+
+      <ListBox ItemsSource="{Binding Projects}"
+               SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
+               Theme="{DynamicResource ProjectStripTheme}"
+               ItemContainerTheme="{DynamicResource ProjectCardTheme}">
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:ProjectCardViewModel">
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+              <Border Grid.Column="0" Classes="glyph large"
+                      Classes.container="{Binding IsSolution}"
+                      VerticalAlignment="Center">
+                <Path Classes="icon" Data="{DynamicResource Icon.Project}" Width="14" Height="14" />
+              </Border>
+              <StackPanel Grid.Column="1" MinWidth="0" Spacing="1">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <TextBlock Grid.Column="0" Text="{Binding Name}" FontWeight="Medium"
+                             TextTrimming="CharacterEllipsis" />
+                  <Border Grid.Column="1" Classes="chip warning" IsVisible="{Binding !IsLoaded}">
+                    <TextBlock Text="not loaded" />
+                  </Border>
+                </Grid>
+                <TextBlock Text="{Binding Detail}" Classes="caption"
+                           TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Detail}" />
+                <TextBlock Text="{Binding Metric}" Classes="caption" />
+              </StackPanel>
+            </Grid>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </StackPanel>
 
     <!-- Status bar -->
 
@@ -136,8 +161,9 @@
             Height="{DynamicResource StatusBarHeight}"
             Background="{DynamicResource SurfaceBrush}"
             BorderBrush="{DynamicResource DividerBrush}"
-            BorderThickness="0,1,0,0">
-      <Grid ColumnDefinitions="*,Auto" Margin="16,0">
+            BorderThickness="0,1,0,0"
+            Margin="0,18,0,0">
+      <Grid ColumnDefinitions="*,Auto" Margin="20,0">
         <TextBlock Grid.Column="0" Text="{Binding StatusMessage}" Classes="meta"
                    TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
@@ -155,444 +181,196 @@
       </Grid>
     </Border>
 
-    <!-- Sidebar -->
+    <!-- Three panes: what to look at, the code, and what the endpoint runs. -->
 
-    <Border DockPanel.Dock="Left"
-            Width="{DynamicResource SidebarWidth}"
-            Background="{DynamicResource SurfaceBrush}"
-            BorderBrush="{DynamicResource DividerBrush}"
-            BorderThickness="0,0,1,0">
-      <DockPanel Margin="12,16">
+    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="18" Margin="20,18,20,0">
 
-        <StackPanel DockPanel.Dock="Top" Spacing="2">
-          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
-                       IsEnabled="{Binding HasWorkspace}"
-                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
-                                   Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:AppSection.Overview}}">
-            <StackPanel Orientation="Horizontal" Spacing="10">
-              <Path Classes="icon" Data="{DynamicResource Icon.Overview}" />
-              <TextBlock Text="Overview" VerticalAlignment="Center" />
-            </StackPanel>
-          </RadioButton>
+      <!-- ============ Sidebar: the sections, then the active one's list ============ -->
 
-          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
-                       IsEnabled="{Binding HasWorkspace}"
-                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
-                                   Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:AppSection.Explorer}}">
-            <StackPanel Orientation="Horizontal" Spacing="10">
-              <Path Classes="icon" Data="{DynamicResource Icon.Explorer}" />
-              <TextBlock Text="Explorer" VerticalAlignment="Center" />
-            </StackPanel>
-          </RadioButton>
+      <Border Grid.Column="0" Classes="card" Width="{DynamicResource SidebarWidth}"
+              ClipToBounds="True">
+        <DockPanel Margin="12,14">
 
-          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
-                       IsEnabled="{Binding HasWorkspace}"
-                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
-                                   Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:AppSection.Search}}">
-            <StackPanel Orientation="Horizontal" Spacing="10">
-              <Path Classes="icon" Data="{DynamicResource Icon.Search}" />
-              <TextBlock Text="Search" VerticalAlignment="Center" />
-            </StackPanel>
-          </RadioButton>
+          <StackPanel DockPanel.Dock="Top" Spacing="4">
+            <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
+                         Padding="12,10"
+                         IsChecked="{Binding ActiveSection, Mode=TwoWay,
+                                     Converter={StaticResource Is},
+                                     ConverterParameter={x:Static vm:AppSection.Indexing}}">
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Indexing}"
+                      Width="18" Height="18" />
+                <StackPanel Grid.Column="1" MinWidth="0">
+                  <TextBlock Text="Indexing" FontWeight="SemiBold" />
+                  <TextBlock Text="Scan and index this solution" Classes="caption" />
+                </StackPanel>
+              </Grid>
+            </RadioButton>
 
-          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
-                       IsEnabled="{Binding HasWorkspace}"
-                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
-                                   Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:AppSection.Endpoints}}">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-              <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Endpoints}" />
-              <TextBlock Grid.Column="1" Text="Endpoints" Margin="10,0,0,0" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="2" Classes="dim" VerticalAlignment="Center"
-                         IsVisible="{Binding HasEndpoints}"
-                         Text="{Binding EndpointCount}" />
-            </Grid>
-          </RadioButton>
+            <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
+                         Padding="12,10"
+                         IsEnabled="{Binding HasWorkspace}"
+                         IsChecked="{Binding ActiveSection, Mode=TwoWay,
+                                     Converter={StaticResource Is},
+                                     ConverterParameter={x:Static vm:AppSection.Explorer}}">
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Explorer}"
+                      Width="18" Height="18" />
+                <StackPanel Grid.Column="1" MinWidth="0">
+                  <TextBlock Text="Explorer" FontWeight="SemiBold" />
+                  <TextBlock Text="Browse what was declared" Classes="caption" />
+                </StackPanel>
+              </Grid>
+            </RadioButton>
 
-          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
-                       IsEnabled="{Binding HasWorkspace}"
-                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
-                                   Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:AppSection.Infrastructure}}">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-              <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Infrastructure}" />
-              <TextBlock Grid.Column="1" Text="Infrastructure" Margin="10,0,0,0" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="2" Classes="dim" VerticalAlignment="Center"
-                         IsVisible="{Binding HasInfrastructure}"
-                         Text="{Binding InfrastructureCount}" />
-            </Grid>
-          </RadioButton>
+            <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
+                         Padding="12,10"
+                         IsEnabled="{Binding HasWorkspace}"
+                         IsChecked="{Binding ActiveSection, Mode=TwoWay,
+                                     Converter={StaticResource Is},
+                                     ConverterParameter={x:Static vm:AppSection.Endpoints}}">
+              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Endpoints}"
+                      Width="18" Height="18" />
+                <StackPanel Grid.Column="1" MinWidth="0">
+                  <TextBlock Text="Endpoints" FontWeight="SemiBold" />
+                  <TextBlock Text="Explore and trace API endpoints" Classes="caption" />
+                </StackPanel>
+                <TextBlock Grid.Column="2" Classes="dim" VerticalAlignment="Center"
+                           IsVisible="{Binding HasAnyEndpoints}"
+                           Text="{Binding EndpointCount}" />
+              </Grid>
+            </RadioButton>
 
-          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
-                       IsEnabled="{Binding HasWorkspace}"
-                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
-                                   Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:AppSection.GitChanges}}">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-              <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.GitChanges}" />
-              <TextBlock Grid.Column="1" Text="Git Changes" Margin="10,0,0,0" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="2" Classes="dim" VerticalAlignment="Center"
-                         IsVisible="{Binding GitChanges.HasChangedFiles}"
-                         Text="{Binding GitChanges.ChangedFileCount}" />
-            </Grid>
-          </RadioButton>
-
-          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
-                       IsEnabled="{Binding HasWorkspace}"
-                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
-                                   Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:AppSection.Impact}}">
-            <StackPanel Orientation="Horizontal" Spacing="10">
-              <Path Classes="icon" Data="{DynamicResource Icon.Impact}" />
-              <TextBlock Text="Impact" VerticalAlignment="Center" />
-            </StackPanel>
-          </RadioButton>
-
-          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
-                       IsEnabled="{Binding HasWorkspace}"
-                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
-                                   Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:AppSection.Context}}">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-              <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Context}" />
-              <TextBlock Grid.Column="1" Text="Context" Margin="10,0,0,0" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="2" Classes="dim" VerticalAlignment="Center"
-                         IsVisible="{Binding Context.HasItems}"
-                         Text="{Binding Context.Items.Count}" />
-            </Grid>
-          </RadioButton>
-
-          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
-                       IsEnabled="{Binding HasWorkspace}"
-                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
-                                   Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:AppSection.Graph}}">
-            <StackPanel Orientation="Horizontal" Spacing="10">
-              <Path Classes="icon" Data="{DynamicResource Icon.Graph}" />
-              <TextBlock Text="Graph" VerticalAlignment="Center" />
-            </StackPanel>
-          </RadioButton>
-
-          <RadioButton Theme="{DynamicResource NavItemTheme}" GroupName="Section"
-                       IsEnabled="{Binding HasWorkspace}"
-                       IsChecked="{Binding ActiveSection, Mode=TwoWay,
-                                   Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:AppSection.Diagnostics}}">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-              <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Diagnostics}" />
-              <TextBlock Grid.Column="1" Text="Diagnostics" Margin="10,0,0,0" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="2" Classes="dim" VerticalAlignment="Center"
-                         IsVisible="{Binding HasDiagnostics}"
-                         Text="{Binding DiagnosticCount}" />
-            </Grid>
-          </RadioButton>
-        </StackPanel>
-
-        <!-- Index state sits at the foot of the sidebar: always visible, never in the way. -->
-        <Border DockPanel.Dock="Bottom" Classes="tile" Padding="12" Margin="0,16,0,0">
-          <StackPanel Spacing="8">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <Ellipse Width="8" Height="8" VerticalAlignment="Center"
-                       Fill="{DynamicResource TextTertiaryBrush}"
-                       IsVisible="{Binding !HasWorkspace}" />
-              <Ellipse Width="8" Height="8" VerticalAlignment="Center"
-                       Fill="{DynamicResource SuccessBrush}"
-                       IsVisible="{Binding Health, Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:IndexHealth.Ready}}" />
-              <Ellipse Width="8" Height="8" VerticalAlignment="Center"
-                       Fill="{DynamicResource InfoBrush}"
-                       IsVisible="{Binding Health, Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:IndexHealth.Indexing}}" />
-              <Ellipse Width="8" Height="8" VerticalAlignment="Center"
-                       Fill="{DynamicResource WarningBrush}"
-                       IsVisible="{Binding Health, Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:IndexHealth.Warnings}}" />
-              <Ellipse Width="8" Height="8" VerticalAlignment="Center"
-                       Fill="{DynamicResource ErrorBrush}"
-                       IsVisible="{Binding Health, Converter={StaticResource SectionIs},
-                                   ConverterParameter={x:Static vm:IndexHealth.Failed}}" />
-              <TextBlock Text="{Binding IndexStateText}" FontWeight="Medium"
-                         TextTrimming="CharacterEllipsis" />
-            </StackPanel>
-
-            <TextBlock Classes="caption" TextTrimming="CharacterEllipsis"
-                       IsVisible="{Binding IndexedAtText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                       Text="{Binding IndexedAtText, StringFormat='Last indexed {0}'}" />
-
-            <StackPanel Spacing="8" IsVisible="{Binding IsIndexing}">
-              <ProgressBar IsIndeterminate="{Binding IsProgressIndeterminate}"
-                           Minimum="0"
-                           Maximum="{Binding ProgressMaximum}"
-                           Value="{Binding ProgressValue}" />
-              <TextBlock Classes="caption" Text="{Binding StatusMessage}"
-                         TextTrimming="CharacterEllipsis" />
-              <Button Theme="{DynamicResource GhostButtonTheme}" Content="Cancel"
-                      Padding="0,2" FontSize="11"
-                      Command="{Binding CancelIndexingCommand}" />
-            </StackPanel>
+            <Border Classes="divider" Margin="0,10,0,4" />
           </StackPanel>
-        </Border>
 
-        <StackPanel DockPanel.Dock="Top" Margin="0,20,0,0" Spacing="6"
-                    IsVisible="{Binding HasRecentWorkspaces}">
-          <TextBlock Classes="overline" Text="Recent" Margin="10,0" />
-          <ItemsControl ItemsSource="{Binding RecentWorkspaces}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:RecentWorkspaceViewModel">
-                <Button Theme="{DynamicResource GhostButtonTheme}"
-                        HorizontalAlignment="Stretch"
-                        Command="{Binding OpenCommand}"
-                        CommandParameter="{Binding Path}"
-                        ToolTip.Tip="{Binding Path}">
-                  <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                </Button>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </StackPanel>
+          <Panel>
 
-        <Panel />
-      </DockPanel>
-    </Border>
-
-    <!-- Main content -->
-
-    <Panel>
-
-      <!-- Empty state: nothing opened yet. -->
-      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
-                  Spacing="12" MaxWidth="360"
-                  IsVisible="{Binding !HasWorkspace}">
-        <Border Classes="glyph large" HorizontalAlignment="Center">
-          <Path Classes="icon" Data="{DynamicResource Icon.Explorer}" Width="18" Height="18" />
-        </Border>
-        <TextBlock Text="No solution open" Classes="section" HorizontalAlignment="Center" />
-        <TextBlock Classes="meta" HorizontalAlignment="Center"
-                   TextAlignment="Center" TextWrapping="Wrap"
-                   Text="Open a .sln, .slnx or .csproj — or a repository folder — and CodeAtlas will index its symbols locally." />
-        <Button Name="EmptyStateOpenButton"
-                Theme="{DynamicResource PrimaryButtonTheme}"
-                Content="Open solution…"
-                HorizontalAlignment="Center" Margin="0,4,0,0" />
-      </StackPanel>
-
-      <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding HasWorkspace}">
-
-        <Panel Grid.Column="0" Margin="24" ClipToBounds="True">
-
-          <!-- Overview -->
-          <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                        IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
-                                    ConverterParameter={x:Static vm:AppSection.Overview}}">
-            <StackPanel Spacing="24">
-
-              <StackPanel Spacing="6">
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                  <TextBlock Classes="title" Text="{Binding WorkspaceTitle}"
-                             TextTrimming="CharacterEllipsis" />
-                  <Border Classes="chip" VerticalAlignment="Center"
-                          IsVisible="{Binding HasGitRepository}"
-                          ToolTip.Tip="{Binding GitStatus}">
-                    <TextBlock Text="Git" />
-                  </Border>
+            <!-- Indexing -->
+            <DockPanel IsVisible="{Binding ActiveSection, Converter={StaticResource Is},
+                                   ConverterParameter={x:Static vm:AppSection.Indexing}}">
+              <StackPanel DockPanel.Dock="Top" Spacing="10" Margin="2,4,2,0">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                           Fill="{DynamicResource TextTertiaryBrush}"
+                           IsVisible="{Binding !HasWorkspace}" />
+                  <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                           Fill="{DynamicResource SuccessBrush}"
+                           IsVisible="{Binding Health, Converter={StaticResource Is},
+                                       ConverterParameter={x:Static vm:IndexHealth.Ready}}" />
+                  <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                           Fill="{DynamicResource InfoBrush}"
+                           IsVisible="{Binding Health, Converter={StaticResource Is},
+                                       ConverterParameter={x:Static vm:IndexHealth.Indexing}}" />
+                  <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                           Fill="{DynamicResource WarningBrush}"
+                           IsVisible="{Binding Health, Converter={StaticResource Is},
+                                       ConverterParameter={x:Static vm:IndexHealth.Warnings}}" />
+                  <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                           Fill="{DynamicResource ErrorBrush}"
+                           IsVisible="{Binding Health, Converter={StaticResource Is},
+                                       ConverterParameter={x:Static vm:IndexHealth.Failed}}" />
+                  <TextBlock Text="{Binding IndexStateText}" FontWeight="Medium" />
                 </StackPanel>
-                <SelectableTextBlock Classes="meta mono" Text="{Binding WorkspacePath}"
-                                     TextTrimming="CharacterEllipsis"
-                                     ToolTip.Tip="{Binding WorkspacePath}" />
-              </StackPanel>
 
-              <!-- Stat tiles wrap rather than squeeze, so a narrow window shows two
-                   rows of readable tiles instead of four truncated ones. -->
-              <WrapPanel ItemWidth="152" ItemHeight="86" Margin="0,0,-12,-12">
-                <Border Classes="card" Padding="14" Margin="0,0,12,12">
-                  <StackPanel Spacing="4">
-                    <TextBlock Classes="overline" Text="Projects" />
-                    <TextBlock Classes="value" Text="{Binding ProjectCount}" />
-                  </StackPanel>
-                </Border>
-                <Border Classes="card" Padding="14" Margin="0,0,12,12">
-                  <StackPanel Spacing="4">
-                    <TextBlock Classes="overline" Text="Symbols" />
-                    <TextBlock Classes="value" Text="{Binding SymbolCount, StringFormat='{}{0:N0}'}" />
-                  </StackPanel>
-                </Border>
-                <Border Classes="card" Padding="14" Margin="0,0,12,12">
-                  <StackPanel Spacing="4">
-                    <TextBlock Classes="overline" Text="Endpoints" />
-                    <TextBlock Classes="value" Text="{Binding EndpointCount}" />
-                  </StackPanel>
-                </Border>
-                <Border Classes="card" Padding="14" Margin="0,0,12,12">
-                  <StackPanel Spacing="4">
-                    <TextBlock Classes="overline" Text="Diagnostics" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                      <TextBlock Classes="value" Text="{Binding DiagnosticCount}" />
-                      <Border Classes="chip error" IsVisible="{Binding HasErrors}"
-                              VerticalAlignment="Center">
-                        <TextBlock Text="{Binding ErrorCount}" />
-                      </Border>
+                <TextBlock Classes="caption" TextTrimming="CharacterEllipsis"
+                           IsVisible="{Binding IndexedAtText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                           Text="{Binding IndexedAtText, StringFormat='Last indexed {0}'}" />
+
+                <StackPanel Spacing="8" IsVisible="{Binding IsIndexing}">
+                  <ProgressBar IsIndeterminate="{Binding IsProgressIndeterminate}"
+                               Minimum="0"
+                               Maximum="{Binding ProgressMaximum}"
+                               Value="{Binding ProgressValue}" />
+                  <TextBlock Classes="caption" Text="{Binding StatusMessage}"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+
+                <Border Classes="tile" Padding="10" IsVisible="{Binding HasWorkspace}">
+                  <Grid ColumnDefinitions="*,*">
+                    <StackPanel Grid.Column="0">
+                      <TextBlock Classes="overline" Text="Projects" />
+                      <TextBlock Text="{Binding ProjectCount}" FontWeight="SemiBold" />
                     </StackPanel>
-                  </StackPanel>
+                    <StackPanel Grid.Column="1">
+                      <TextBlock Classes="overline" Text="Symbols" />
+                      <TextBlock Text="{Binding SymbolCount, StringFormat='{}{0:N0}'}"
+                                 FontWeight="SemiBold" />
+                    </StackPanel>
+                  </Grid>
                 </Border>
-                <Border Classes="card" Padding="14" Margin="0,0,12,12">
-                  <StackPanel Spacing="4">
-                    <TextBlock Classes="overline" Text="Index" />
-                    <TextBlock Text="{Binding IndexStateText}" FontWeight="SemiBold"
-                               TextTrimming="CharacterEllipsis" />
-                    <TextBlock Classes="caption" Text="{Binding IndexedAtText}"
-                               TextTrimming="CharacterEllipsis" />
-                  </StackPanel>
-                </Border>
-              </WrapPanel>
 
-              <Border Classes="card" Padding="20">
-                <StackPanel Spacing="12">
-                  <TextBlock Classes="section" Text="Projects" />
-                  <ItemsControl ItemsSource="{Binding Projects}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="model:IndexedProject">
-                        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,3" ColumnSpacing="10">
-                          <Border Grid.Column="0" Classes="glyph container">
-                            <TextBlock Text="Pr" />
-                          </Border>
-                          <StackPanel Grid.Column="1">
-                            <TextBlock Text="{Binding Name}" FontWeight="Medium"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Classes="caption" Text="{Binding FilePath}"
-                                       TextTrimming="CharacterEllipsis" />
-                          </StackPanel>
-                          <Border Grid.Column="2" Classes="chip warning" IsVisible="{Binding !Loaded}">
-                            <TextBlock Text="not loaded" />
-                          </Border>
-                        </Grid>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-              </Border>
-
-            </StackPanel>
-          </ScrollViewer>
-
-          <!-- Explorer -->
-          <Grid RowDefinitions="Auto,*" RowSpacing="16"
-                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
-                            ConverterParameter={x:Static vm:AppSection.Explorer}}">
-            <StackPanel Grid.Row="0" Spacing="4">
-              <TextBlock Classes="title" Text="Explorer" />
-              <TextBlock Classes="meta" Text="Projects, namespaces and the symbols declared in them." />
-            </StackPanel>
-            <Border Grid.Row="1" Classes="card" Padding="12" ClipToBounds="True">
-              <TreeView ItemsSource="{Binding ProjectNodes}"
-                        ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                        SelectedItem="{Binding SelectedNode, Mode=TwoWay}">
-                <TreeView.Styles>
-                  <Style Selector="TreeViewItem" x:DataType="vm:TreeNodeViewModel">
-                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
-                  </Style>
-                </TreeView.Styles>
-                <TreeView.ItemTemplate>
-                  <TreeDataTemplate x:DataType="vm:TreeNodeViewModel" ItemsSource="{Binding Children}">
-                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8" Margin="0,3">
-                      <TextBlock Grid.Column="0" Width="20" TextAlignment="Center"
-                                 Text="{Binding Glyph}" FontSize="11"
-                                 Classes.strong="{Binding IsContainer}"
-                                 Classes.dimmer="{Binding !IsContainer}"
-                                 VerticalAlignment="Center" />
-                      <TextBlock Grid.Column="1" Text="{Binding Title}"
-                                 Classes.strong="{Binding IsProject}"
-                                 TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                      <Border Grid.Column="2" Classes="chip warning" IsVisible="{Binding !IsLoaded}">
-                        <TextBlock Text="not loaded" />
-                      </Border>
-                    </Grid>
-                  </TreeDataTemplate>
-                </TreeView.ItemTemplate>
-              </TreeView>
-            </Border>
-          </Grid>
-
-          <!-- Search -->
-          <Grid RowDefinitions="Auto,*" RowSpacing="16"
-                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
-                            ConverterParameter={x:Static vm:AppSection.Search}}">
-            <StackPanel Grid.Row="0" Spacing="4">
-              <TextBlock Classes="title" Text="Search" />
-              <TextBlock Classes="meta" Text="{Binding SearchSummary}" />
-            </StackPanel>
-
-            <Border Grid.Row="1" Classes="card" Padding="10" ClipToBounds="True">
-              <Panel>
-                <ListBox ItemsSource="{Binding SearchResults}"
-                         SelectedItem="{Binding SelectedSearchResult, Mode=TwoWay}"
-                         Theme="{DynamicResource ResultListTheme}"
-                         ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                         IsVisible="{Binding HasSearchResults}">
-                  <ListBox.ItemTemplate>
-                    <DataTemplate x:DataType="vm:SearchResultViewModel">
-                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-                        <Border Grid.Column="0" Classes="glyph"
-                                Classes.container="{Binding IsContainer}">
-                          <TextBlock Text="{Binding Glyph}" />
-                        </Border>
-                        <StackPanel Grid.Column="1">
-                          <TextBlock Text="{Binding Display}" FontWeight="Medium"
-                                     TextTrimming="CharacterEllipsis" />
-                          <TextBlock Text="{Binding Container}" Classes="dim"
-                                     TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2" HorizontalAlignment="Right">
-                          <TextBlock Text="{Binding Project}" Classes="dim"
-                                     TextAlignment="Right" TextTrimming="CharacterEllipsis" />
-                          <TextBlock Text="{Binding Location}" Classes="dimmer"
-                                     IsVisible="{Binding HasLocation}"
-                                     TextAlignment="Right" TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
-                      </Grid>
-                    </DataTemplate>
-                  </ListBox.ItemTemplate>
-                </ListBox>
-
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                            IsVisible="{Binding !HasSearchQuery}">
-                  <TextBlock Text="Search the index" Classes="section" HorizontalAlignment="Center" />
-                  <TextBlock Classes="meta" HorizontalAlignment="Center"
-                             Text="Type a symbol name in the search box above." />
-                </StackPanel>
-
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                            IsVisible="{Binding !HasSearchResults}">
-                  <TextBlock Text="No matches" Classes="section" HorizontalAlignment="Center"
-                             IsVisible="{Binding HasSearchQuery}" />
-                  <TextBlock Classes="meta" HorizontalAlignment="Center"
-                             IsVisible="{Binding HasSearchQuery}"
-                             Text="No indexed symbol matches that name." />
-                </StackPanel>
-              </Panel>
-            </Border>
-          </Grid>
-
-          <!-- Endpoints -->
-          <Grid RowDefinitions="Auto,*" RowSpacing="16"
-                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
-                            ConverterParameter={x:Static vm:AppSection.Endpoints}}">
-            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16">
-              <StackPanel Grid.Column="0" Spacing="4">
-                <TextBlock Classes="title" Text="Endpoints" TextTrimming="CharacterEllipsis" />
-                <TextBlock Classes="meta" TextTrimming="CharacterEllipsis"
-                           Text="HTTP entry points found in source. Select one to trace its flow." />
+                <TextBlock Classes="overline" Text="What indexing could not do" Margin="0,6,0,0"
+                           IsVisible="{Binding HasDiagnostics}" />
               </StackPanel>
-              <TextBox Grid.Column="1" Theme="{DynamicResource SearchBoxTheme}"
-                       Width="200" VerticalAlignment="Center"
-                       PlaceholderText="Filter routes"
-                       IsVisible="{Binding HasEndpoints}"
-                       Text="{Binding EndpointFilter, Mode=TwoWay}" />
-            </Grid>
 
-            <Border Grid.Row="1" Classes="card" Padding="10" ClipToBounds="True">
+              <ScrollViewer HorizontalScrollBarVisibility="Disabled" Margin="0,8,0,0">
+                <ItemsControl ItemsSource="{Binding Diagnostics}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="model:IndexDiagnostic">
+                      <Border Classes="tile" Padding="10" Margin="0,0,0,8">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding Project}" Classes="caption"
+                                     FontWeight="Medium" TextTrimming="CharacterEllipsis"
+                                     IsVisible="{Binding Project, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                          <TextBlock Text="{Binding Message}" Classes="caption"
+                                     TextWrapping="Wrap" />
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </DockPanel>
+
+            <!-- Explorer -->
+            <TreeView IsVisible="{Binding ActiveSection, Converter={StaticResource Is},
+                                 ConverterParameter={x:Static vm:AppSection.Explorer}}"
+                      ItemsSource="{Binding ProjectNodes}"
+                      SelectedItem="{Binding SelectedNode, Mode=TwoWay}"
+                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+              <TreeView.Styles>
+                <Style Selector="TreeViewItem" x:DataType="vm:TreeNodeViewModel">
+                  <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                </Style>
+              </TreeView.Styles>
+              <TreeView.ItemTemplate>
+                <TreeDataTemplate x:DataType="vm:TreeNodeViewModel" ItemsSource="{Binding Children}">
+                  <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8" Margin="0,3">
+                    <TextBlock Grid.Column="0" Width="20" TextAlignment="Center"
+                               Text="{Binding Glyph}" FontSize="11"
+                               Classes.strong="{Binding IsContainer}"
+                               Classes.dimmer="{Binding !IsContainer}"
+                               VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding Title}"
+                               Classes.strong="{Binding IsProject}"
+                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <Border Grid.Column="2" Classes="chip warning" IsVisible="{Binding !IsLoaded}">
+                      <TextBlock Text="not loaded" />
+                    </Border>
+                    <Grid.ContextMenu>
+                      <ContextMenu>
+                        <MenuItem
+                            Header="Open in editor"
+                            Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).OpenExternallyCommand}"
+                            CommandParameter="{Binding}" />
+                      </ContextMenu>
+                    </Grid.ContextMenu>
+                  </Grid>
+                </TreeDataTemplate>
+              </TreeView.ItemTemplate>
+            </TreeView>
+
+            <!-- Endpoints -->
+            <DockPanel IsVisible="{Binding ActiveSection, Converter={StaticResource Is},
+                                   ConverterParameter={x:Static vm:AppSection.Endpoints}}">
+              <TextBox DockPanel.Dock="Top" Margin="2,4,2,10"
+                       Theme="{DynamicResource SearchBoxTheme}"
+                       PlaceholderText="Search endpoints…"
+                       IsVisible="{Binding HasAnyEndpoints}"
+                       Text="{Binding EndpointFilter, Mode=TwoWay}" />
+
               <Panel>
                 <ListBox ItemsSource="{Binding Endpoints}"
                          SelectedItem="{Binding SelectedEndpoint, Mode=TwoWay}"
@@ -601,41 +379,28 @@
                          IsVisible="{Binding HasEndpoints}">
                   <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:EndpointViewModel">
-                      <!-- The route is the identity, so it gets the flexible column; the
-                           handler and its origin share the line under it. -->
-                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-                        <Border Grid.Column="0" Classes="verb">
+                      <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                        <Border Grid.Column="0" Classes="verb"
+                                Classes.get="{Binding IsGet}"
+                                Classes.post="{Binding IsPost}"
+                                Classes.put="{Binding IsPut}"
+                                Classes.delete="{Binding IsDelete}"
+                                VerticalAlignment="Top">
                           <TextBlock Text="{Binding HttpMethod}" />
                         </Border>
                         <StackPanel Grid.Column="1" MinWidth="0">
+                          <!-- Wrapped, not trimmed: a real route's distinguishing part is
+                               its tail, which is exactly what an ellipsis eats. -->
                           <TextBlock Text="{Binding Route}" Classes="mono strong"
+                                     TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding Handler}" Classes="caption"
                                      TextTrimming="CharacterEllipsis" />
-                          <!-- A Grid, not a horizontal StackPanel: a StackPanel measures its
-                               children unbounded, so nothing inside one ever trims. -->
-                          <!-- The handler takes the Auto column so it is served first; the
-                               origin is the half worth losing when the row is narrow. -->
-                          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
-                            <TextBlock Grid.Column="0" Text="{Binding Handler}" Classes="dim"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
-                                       TextTrimming="CharacterEllipsis" />
-                          </Grid>
                         </StackPanel>
-                        <Border Grid.Column="2" Classes="chip"
-                                Classes.warning="{Binding IsAnonymous}"
-                                IsVisible="{Binding HasAuthorization}"
-                                VerticalAlignment="Center">
-                          <TextBlock Text="{Binding Authorization}" />
-                        </Border>
                         <Grid.ContextMenu>
                           <ContextMenu>
                             <MenuItem
-                                Header="Analyse impact"
-                                Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).AnalyzeImpactCommand}"
-                                CommandParameter="{Binding}" />
-                            <MenuItem
-                                Header="Open source"
-                                Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).OpenEndpointSourceCommand}"
+                                Header="Open in editor"
+                                Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).OpenExternallyCommand}"
                                 CommandParameter="{Binding}" />
                           </ContextMenu>
                         </Grid.ContextMenu>
@@ -648,1649 +413,233 @@
                             IsVisible="{Binding !HasEndpoints}">
                   <TextBlock Text="No endpoints" Classes="section" HorizontalAlignment="Center" />
                   <TextBlock Classes="meta" HorizontalAlignment="Center"
-                             TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
-                             Text="Nothing in this workspace declares an attribute-routed controller action or a Minimal API route with a literal template." />
+                             TextAlignment="Center" TextWrapping="Wrap"
+                             Text="Nothing in scope declares an attribute-routed controller action or a Minimal API route with a literal template." />
                 </StackPanel>
               </Panel>
-            </Border>
-          </Grid>
+            </DockPanel>
+          </Panel>
+        </DockPanel>
+      </Border>
 
-          <!-- Infrastructure -->
-          <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16"
-                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
-                            ConverterParameter={x:Static vm:AppSection.Infrastructure}}">
-            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16">
-              <StackPanel Grid.Column="0" Spacing="4">
-                <TextBlock Classes="title" Text="Infrastructure" TextTrimming="CharacterEllipsis" />
-                <TextBlock Classes="meta" TextTrimming="CharacterEllipsis"
-                           Text="{Binding InfrastructureSubtitle}" />
-              </StackPanel>
-              <TextBox Grid.Column="1" Theme="{DynamicResource SearchBoxTheme}"
-                       Width="200" VerticalAlignment="Center"
-                       PlaceholderText="Filter"
-                       Text="{Binding InfrastructureFilter, Mode=TwoWay}" />
-            </Grid>
+      <!-- ============ The code, read-only ============ -->
 
-            <!-- The same three cuts the graph filters by, seen as tables. -->
-            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
-              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
-                      Classes.selected="{Binding IsDatabaseView}" Content="Database"
-                      Command="{Binding SetInfrastructureViewCommand}"
-                      CommandParameter="{x:Static vm:InfrastructureView.Database}" />
-              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
-                      Classes.selected="{Binding IsConfigurationView}" Content="Configuration"
-                      Command="{Binding SetInfrastructureViewCommand}"
-                      CommandParameter="{x:Static vm:InfrastructureView.Configuration}" />
-              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
-                      Classes.selected="{Binding IsExternalView}" Content="External services"
-                      Command="{Binding SetInfrastructureViewCommand}"
-                      CommandParameter="{x:Static vm:InfrastructureView.ExternalServices}" />
-            </StackPanel>
+      <Border Grid.Column="1" Classes="card" ClipToBounds="True">
+        <DockPanel>
 
-            <!-- Database: entities, with the migrations that touch their tables under them. -->
-            <Grid Grid.Row="2" RowDefinitions="*,Auto" RowSpacing="12"
-                  IsVisible="{Binding IsDatabaseView}">
-              <Border Grid.Row="0" Classes="card" Padding="10" ClipToBounds="True">
-                <Panel>
-                  <ListBox ItemsSource="{Binding Entities}"
-                           SelectedItem="{Binding SelectedEntity, Mode=TwoWay}"
-                           Theme="{DynamicResource ResultListTheme}"
-                           ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                           IsVisible="{Binding HasEntities}">
-                    <ListBox.ItemTemplate>
-                      <DataTemplate x:DataType="vm:EntityRowViewModel">
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                          <StackPanel Grid.Column="0" MinWidth="0">
-                            <TextBlock Text="{Binding Entity}" Classes="strong"
-                                       TextTrimming="CharacterEllipsis" />
-                            <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="6">
-                              <TextBlock Grid.Column="0" Text="{Binding Context}" Classes="dim"
-                                         TextTrimming="CharacterEllipsis" />
-                              <TextBlock Grid.Column="1" Text="{Binding Configuration}" Classes="dimmer"
-                                         IsVisible="{Binding HasConfiguration}"
-                                         TextTrimming="CharacterEllipsis" />
-                              <TextBlock Grid.Column="2" Text="{Binding Origin}" Classes="dimmer"
-                                         TextTrimming="CharacterEllipsis" />
-                            </Grid>
-                          </StackPanel>
-                          <Border Grid.Column="1" Classes="chip" VerticalAlignment="Center"
-                                  ToolTip.Tip="The table this entity is mapped to">
-                            <TextBlock Text="{Binding Table}" Classes="mono" />
-                          </Border>
-
-                          <Grid.ContextMenu>
-                            <ContextMenu>
-                              <MenuItem
-                                  Header="Analyse impact"
-                                  Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).AnalyzeImpactCommand}"
-                                  CommandParameter="{Binding}" />
-                            </ContextMenu>
-                          </Grid.ContextMenu>
-                        </Grid>
-                      </DataTemplate>
-                    </ListBox.ItemTemplate>
-                  </ListBox>
-
-                  <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                              IsVisible="{Binding !HasEntities}">
-                    <TextBlock Text="No entities" Classes="section" HorizontalAlignment="Center" />
-                    <TextBlock Classes="meta" HorizontalAlignment="Center"
-                               TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
-                               Text="Nothing in this workspace declares a DbContext, a DbSet or an entity type configuration." />
-                  </StackPanel>
-                </Panel>
+          <Border DockPanel.Dock="Top" Padding="16,12"
+                  BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="10">
+              <Path Grid.Column="0" Classes="icon" Data="{DynamicResource Icon.Code}"
+                    Width="15" Height="15" />
+              <TextBlock Grid.Column="1" Text="{Binding Source.FileName}" FontWeight="SemiBold"
+                         VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2" Text="{Binding Source.Breadcrumb}" Classes="meta"
+                         VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding Source.FilePath}" />
+              <Border Grid.Column="3" Classes="chip">
+                <TextBlock Text="C#" />
               </Border>
-
-              <Border Grid.Row="1" Classes="card" Padding="10" MaxHeight="220"
-                      ClipToBounds="True" IsVisible="{Binding HasMigrations}">
-                <StackPanel Spacing="8">
-                  <TextBlock Classes="overline" Text="Migrations" />
-                  <ListBox ItemsSource="{Binding Migrations}"
-                           SelectedItem="{Binding SelectedMigration, Mode=TwoWay}"
-                           Theme="{DynamicResource ResultListTheme}"
-                           ItemContainerTheme="{DynamicResource ResultRowTheme}">
-                    <ListBox.ItemTemplate>
-                      <DataTemplate x:DataType="vm:MigrationRowViewModel">
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                          <StackPanel Grid.Column="0" MinWidth="0">
-                            <TextBlock Text="{Binding Name}" Classes="mono strong"
-                                       TextTrimming="CharacterEllipsis" />
-                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
-                              <TextBlock Grid.Column="0" Text="{Binding Context}" Classes="dim"
-                                         TextTrimming="CharacterEllipsis" />
-                              <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
-                                         TextTrimming="CharacterEllipsis" />
-                            </Grid>
-                          </StackPanel>
-                          <TextBlock Grid.Column="1" Text="{Binding Tables}" Classes="caption"
-                                     VerticalAlignment="Center" MaxWidth="280"
-                                     TextTrimming="CharacterEllipsis"
-                                     ToolTip.Tip="Tables this migration names" />
-                        </Grid>
-                      </DataTemplate>
-                    </ListBox.ItemTemplate>
-                  </ListBox>
-                </StackPanel>
-              </Border>
+              <Button Grid.Column="4" Theme="{DynamicResource GhostButtonTheme}"
+                      Content="Open in editor" FontSize="12"
+                      IsVisible="{Binding HasSource}"
+                      Command="{Binding OpenExternallyCommand}" />
             </Grid>
+          </Border>
 
-            <!-- Configuration -->
-            <Border Grid.Row="2" Classes="card" Padding="10" ClipToBounds="True"
-                    IsVisible="{Binding IsConfigurationView}">
-              <Panel>
-                <ListBox ItemsSource="{Binding ConfigurationKeys}"
-                         SelectedItem="{Binding SelectedConfiguration, Mode=TwoWay}"
-                         Theme="{DynamicResource ResultListTheme}"
-                         ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                         IsVisible="{Binding HasConfigurationKeys}">
-                  <ListBox.ItemTemplate>
-                    <DataTemplate x:DataType="vm:ConfigurationRowViewModel">
-                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-                        <Border Grid.Column="0" Classes="verb">
-                          <TextBlock Text="{Binding Access}" />
-                        </Border>
-                        <StackPanel Grid.Column="1" MinWidth="0">
-                          <TextBlock Text="{Binding Key}" Classes="mono strong"
-                                     TextTrimming="CharacterEllipsis" />
-                          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
-                            <TextBlock Grid.Column="0" Text="{Binding Consumer}" Classes="dim"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
-                                       TextTrimming="CharacterEllipsis" />
-                          </Grid>
-                        </StackPanel>
-                        <Border Grid.Column="2" Classes="chip" VerticalAlignment="Center"
-                                IsVisible="{Binding HasOptions}">
-                          <TextBlock Text="{Binding Options}" />
-                        </Border>
-                      </Grid>
-                    </DataTemplate>
-                  </ListBox.ItemTemplate>
-                </ListBox>
-
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                            IsVisible="{Binding !HasConfigurationKeys}">
-                  <TextBlock Text="No configuration" Classes="section" HorizontalAlignment="Center" />
-                  <TextBlock Classes="meta" HorizontalAlignment="Center"
-                             TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
-                             Text="Nothing in this workspace reads a configuration key, section or options type by a name written in source." />
-                </StackPanel>
-              </Panel>
-            </Border>
-
-            <!-- External services -->
-            <Border Grid.Row="2" Classes="card" Padding="10" ClipToBounds="True"
-                    IsVisible="{Binding IsExternalView}">
-              <Panel>
-                <ListBox ItemsSource="{Binding ExternalServices}"
-                         SelectedItem="{Binding SelectedExternalService, Mode=TwoWay}"
-                         Theme="{DynamicResource ResultListTheme}"
-                         ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                         IsVisible="{Binding HasExternalServices}">
-                  <ListBox.ItemTemplate>
-                    <DataTemplate x:DataType="vm:ExternalRowViewModel">
-                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-                        <Border Grid.Column="0" Classes="verb">
-                          <TextBlock Text="{Binding TechnologyLabel}" />
-                        </Border>
-                        <StackPanel Grid.Column="1" MinWidth="0">
-                          <TextBlock Text="{Binding Consumer}" Classes="strong"
-                                     TextTrimming="CharacterEllipsis" />
-                          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
-                            <TextBlock Grid.Column="0" Text="{Binding Client}" Classes="dim"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
-                                       TextTrimming="CharacterEllipsis" />
-                          </Grid>
-                        </StackPanel>
-                        <Border Grid.Column="2" Classes="chip" VerticalAlignment="Center"
-                                ToolTip.Tip="How this boundary was found">
-                          <TextBlock Text="{Binding Binding}" />
-                        </Border>
-                      </Grid>
-                    </DataTemplate>
-                  </ListBox.ItemTemplate>
-                </ListBox>
-
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                            IsVisible="{Binding !HasExternalServices}">
-                  <TextBlock Text="No external services" Classes="section" HorizontalAlignment="Center" />
-                  <TextBlock Classes="meta" HorizontalAlignment="Center"
-                             TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
-                             Text="Nothing in this workspace reaches an HTTP, gRPC, cache, broker, storage or file-system client CodeAtlas recognises." />
-                </StackPanel>
-              </Panel>
-            </Border>
-          </Grid>
-
-          <!-- Git Changes -->
-          <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16"
-                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
-                            ConverterParameter={x:Static vm:AppSection.GitChanges}}">
-
-            <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="16"
-                  DataContext="{Binding GitChanges}" x:DataType="vm:GitChangesViewModel">
-              <StackPanel Grid.Column="0" Spacing="4" MinWidth="0">
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                  <TextBlock Classes="title" Text="Git Changes" />
-                  <Border Classes="chip" VerticalAlignment="Center"
-                          IsVisible="{Binding HasRepository}"
-                          ToolTip.Tip="The checked-out branch, or the commit when the head is detached">
-                    <TextBlock Text="{Binding Branch}" Classes="mono" />
-                  </Border>
-                  <Border Classes="chip warning" VerticalAlignment="Center"
-                          IsVisible="{Binding IsDetached}"
-                          ToolTip.Tip="HEAD is detached, so the baseline is a commit rather than a branch">
-                    <TextBlock Text="detached" />
-                  </Border>
-                </StackPanel>
-                <TextBlock Classes="meta" Text="{Binding StatusSummary}"
-                           TextTrimming="CharacterEllipsis" />
-                <TextBlock Classes="dimmer" Text="{Binding Subtitle}"
-                           TextTrimming="CharacterEllipsis" />
-              </StackPanel>
-
-              <TextBox Grid.Column="1" Theme="{DynamicResource SearchBoxTheme}"
-                       Width="200" VerticalAlignment="Center"
-                       PlaceholderText="Filter"
-                       IsEnabled="{Binding HasRepository}"
-                       Text="{Binding Filter, Mode=TwoWay}" />
-
-              <!-- Git state moves under the reader's feet, so re-reading it is explicit
-                   rather than watched: no file watcher, and one click to be current. -->
-              <Button Grid.Column="2" Theme="{DynamicResource SecondaryButtonTheme}"
-                      VerticalAlignment="Center"
-                      Command="{Binding RefreshCommand}"
-                      ToolTip.Tip="Re-read the working tree">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                  <Path Classes="icon" Data="{DynamicResource Icon.Refresh}" />
-                  <TextBlock Text="Refresh" VerticalAlignment="Center" />
-                </StackPanel>
-              </Button>
-            </Grid>
-
-            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8"
-                        DataContext="{Binding GitChanges}" x:DataType="vm:GitChangesViewModel"
-                        IsVisible="{Binding HasRepository}">
-              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
-                      Classes.selected="{Binding IsSymbolsView}" Content="Changed symbols"
-                      Command="{Binding SetViewCommand}"
-                      CommandParameter="{x:Static vm:GitChangesView.Symbols}" />
-              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
-                      Classes.selected="{Binding IsFilesView}" Content="Files"
-                      Command="{Binding SetViewCommand}"
-                      CommandParameter="{x:Static vm:GitChangesView.Files}" />
-              <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
-                      Classes.selected="{Binding IsHistoryView}" Content="History"
-                      Command="{Binding SetViewCommand}"
-                      CommandParameter="{x:Static vm:GitChangesView.History}" />
-              <ProgressBar Width="120" IsIndeterminate="True" VerticalAlignment="Center"
-                           IsVisible="{Binding IsLoading}" />
+          <Border DockPanel.Dock="Bottom" Padding="16,6"
+                  BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="16" HorizontalAlignment="Right"
+                        IsVisible="{Binding HasSource}">
+              <TextBlock Classes="caption" Text="{Binding Source.Line, StringFormat='Ln {0}'}" />
+              <TextBlock Classes="caption" Text="{Binding Source.LineCount, StringFormat='{}{0:N0} lines'}" />
+              <TextBlock Classes="caption" Text="Read-only" />
+              <TextBlock Classes="caption" Text="C#" />
             </StackPanel>
+          </Border>
 
-            <Panel Grid.Row="2" DataContext="{Binding GitChanges}" x:DataType="vm:GitChangesViewModel">
-
-              <!-- Not a Git working tree at all, which is a normal state rather than a failure. -->
-              <Border Classes="card" IsVisible="{Binding !HasRepository}">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
-                  <TextBlock Text="No Git repository" Classes="section" HorizontalAlignment="Center" />
-                  <TextBlock Classes="meta" HorizontalAlignment="Center"
-                             TextAlignment="Center" TextWrapping="Wrap" MaxWidth="420"
-                             Text="This workspace is not inside a Git working tree, so there is no baseline to compare it against." />
-                </StackPanel>
-              </Border>
-
-              <Panel IsVisible="{Binding HasRepository}">
-                <!-- Changed symbols: the diff expressed in the terms the rest of the app
-                     speaks, so a row leads straight into the semantic map. -->
-                <Border Classes="card" Padding="10" ClipToBounds="True"
-                        IsVisible="{Binding IsSymbolsView}">
-                  <Panel>
-                    <ListBox ItemsSource="{Binding Symbols}"
-                             SelectedItem="{Binding SelectedSymbol, Mode=TwoWay}"
-                             Theme="{DynamicResource ResultListTheme}"
-                             ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                             IsVisible="{Binding HasChangedSymbols}">
-                      <ListBox.ItemTemplate>
-                        <DataTemplate x:DataType="vm:ChangedSymbolViewModel">
-                         <StackPanel Spacing="6">
-                          <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="12">
-                            <Border Grid.Column="0" Classes="glyph"
-                                    Classes.container="{Binding IsContainer}"
-                                    VerticalAlignment="Center">
-                              <TextBlock Text="{Binding Glyph}" />
-                            </Border>
-                            <StackPanel Grid.Column="1" MinWidth="0">
-                              <TextBlock Text="{Binding Display}" Classes="strong"
-                                         TextTrimming="CharacterEllipsis" />
-                              <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="6">
-                                <TextBlock Grid.Column="0" Text="{Binding Kind}" Classes="dimmer" />
-                                <TextBlock Grid.Column="1" Text="{Binding Container}" Classes="dim"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="2" Text="{Binding Origin}" Classes="dimmer"
-                                           TextTrimming="CharacterEllipsis" />
-                              </Grid>
-                            </StackPanel>
-
-                            <!-- A declaration read from the baseline was never resolved by the
-                                 compiler, and says so rather than passing as indexed truth. -->
-                            <Border Grid.Column="2" Classes="chip" VerticalAlignment="Center"
-                                    IsVisible="{Binding IsInferred}"
-                                    ToolTip.Tip="Read from the baseline source, not resolved by the compiler">
-                              <TextBlock Text="inferred" />
-                            </Border>
-
-                            <!-- What was holding this declaration. A warning only where a
-                                 test was expected, so silence never has to be interpreted. -->
-                            <Border Grid.Column="3" Classes="chip" VerticalAlignment="Center"
-                                    Classes.warning="{Binding IsUntested}"
-                                    IsVisible="{Binding HasTestSummary}"
-                                    ToolTip.Tip="The tests that exercise this declaration">
-                              <TextBlock Text="{Binding TestSummary}" />
-                            </Border>
-
-                            <Border Grid.Column="4" Classes="chip" VerticalAlignment="Center"
-                                    Classes.success="{Binding IsAdded}"
-                                    Classes.warning="{Binding IsRemoved}">
-                              <TextBlock Text="{Binding ChangeLabel}" />
-                            </Border>
-
-                            <Grid.ContextMenu>
-                              <ContextMenu>
-                                <MenuItem
-                                    Header="Analyse impact"
-                                    Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).AnalyzeImpactCommand}"
-                                    CommandParameter="{Binding}" />
-                              </ContextMenu>
-                            </Grid.ContextMenu>
-                          </Grid>
-
-                          <!-- The tests themselves, indented under the symbol they cover, so
-                               the whole answer reads without a second click. -->
-                          <StackPanel Margin="34,0,0,0" IsVisible="{Binding HasTests}">
-                            <ItemsControl ItemsSource="{Binding Tests}">
-                              <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="vm:RelatedTestViewModel">
-                                  <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" Margin="0,2">
-                                    <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top"
-                                            Classes.warning="{Binding !IsExact}">
-                                      <TextBlock Text="{Binding Confidence}" />
-                                    </Border>
-                                    <StackPanel Grid.Column="1" MinWidth="0">
-                                      <TextBlock Text="{Binding Name}" Classes="mono"
-                                                 TextTrimming="CharacterEllipsis" />
-                                      <TextBlock Text="{Binding Reason}" Classes="caption"
-                                                 TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
-                                  </Grid>
-                                </DataTemplate>
-                              </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                            <TextBlock Classes="caption" Margin="0,2,0,0"
-                                       IsVisible="{Binding HasMore}"
-                                       Text="{Binding MoreSummary}" />
-                          </StackPanel>
-                         </StackPanel>
-                        </DataTemplate>
-                      </ListBox.ItemTemplate>
-                    </ListBox>
-
-                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                                IsVisible="{Binding !HasChangedSymbols}">
-                      <TextBlock Text="No changed symbols" Classes="section" HorizontalAlignment="Center" />
-                      <TextBlock Classes="meta" HorizontalAlignment="Center"
-                                 TextAlignment="Center" TextWrapping="Wrap" MaxWidth="440"
-                                 Text="{Binding EmptySymbolsNotice}" />
-                    </StackPanel>
-                  </Panel>
-                </Border>
-
-                <!-- Files: Git's own account, with the diff of whichever path is selected. -->
-                <Grid RowDefinitions="*,Auto" RowSpacing="12" IsVisible="{Binding IsFilesView}">
-                  <Border Grid.Row="0" Classes="card" Padding="10" ClipToBounds="True">
-                    <Panel>
-                      <ListBox ItemsSource="{Binding Files}"
-                               SelectedItem="{Binding SelectedFile, Mode=TwoWay}"
-                               Theme="{DynamicResource ResultListTheme}"
-                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                               IsVisible="{Binding HasChangedFiles}">
-                        <ListBox.ItemTemplate>
-                          <DataTemplate x:DataType="vm:ChangedFileViewModel">
-                            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="12">
-                              <StackPanel Grid.Column="0" MinWidth="0">
-                                <TextBlock Text="{Binding Name}" Classes="strong"
-                                           TextTrimming="CharacterEllipsis" />
-                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
-                                  <TextBlock Grid.Column="0" Text="{Binding Directory}" Classes="dim"
-                                             TextTrimming="CharacterEllipsis" />
-                                  <TextBlock Grid.Column="1" Text="{Binding Origin}" Classes="dimmer"
-                                             IsVisible="{Binding HasOrigin}"
-                                             TextTrimming="CharacterEllipsis" />
-                                </Grid>
-                              </StackPanel>
-                              <TextBlock Grid.Column="1" Text="{Binding Stat}" Classes="caption mono"
-                                         VerticalAlignment="Center"
-                                         IsVisible="{Binding HasStat}"
-                                         ToolTip.Tip="Lines added and removed" />
-                              <TextBlock Grid.Column="2" Text="{Binding StageLabel}" Classes="dimmer"
-                                         VerticalAlignment="Center"
-                                         IsVisible="{Binding HasStageLabel}"
-                                         ToolTip.Tip="Where this change currently lives" />
-                              <Border Grid.Column="3" Classes="chip" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding ChangeLabel}" />
-                              </Border>
-
-                              <Grid.ContextMenu>
-                                <ContextMenu>
-                                  <MenuItem Header="Open file"
-                                            Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).GitChanges.OpenFileCommand}"
-                                            CommandParameter="{Binding}" />
-                                </ContextMenu>
-                              </Grid.ContextMenu>
-                            </Grid>
-                          </DataTemplate>
-                        </ListBox.ItemTemplate>
-                      </ListBox>
-
-                      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                                  IsVisible="{Binding !HasChangedFiles}">
-                        <TextBlock Text="Nothing changed" Classes="section" HorizontalAlignment="Center" />
-                        <TextBlock Classes="meta" HorizontalAlignment="Center"
-                                   TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
-                                   Text="The working tree matches its baseline." />
-                      </StackPanel>
-                    </Panel>
-                  </Border>
-
-                  <Border Grid.Row="1" Classes="card" Padding="10" MaxHeight="300"
-                          ClipToBounds="True" IsVisible="{Binding HasDiff}">
-                    <StackPanel Spacing="8">
-                      <TextBlock Classes="overline" Text="Diff" />
-                      <ScrollViewer HorizontalScrollBarVisibility="Auto" MaxHeight="250">
-                        <SelectableTextBlock Text="{Binding DiffText}" Classes="mono caption" />
-                      </ScrollViewer>
-                    </StackPanel>
-                  </Border>
-                </Grid>
-
-                <!-- History: the branch's recent commits, or the selected file's. -->
-                <Border Classes="card" Padding="10" ClipToBounds="True"
-                        IsVisible="{Binding IsHistoryView}">
-                  <Grid RowDefinitions="Auto,*" RowSpacing="8">
-                    <TextBlock Grid.Row="0" Classes="overline" Text="{Binding HistoryCaption}" />
-                    <Panel Grid.Row="1">
-                      <ListBox ItemsSource="{Binding Commits}"
-                               Theme="{DynamicResource ResultListTheme}"
-                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                               IsVisible="{Binding HasCommits}">
-                        <ListBox.ItemTemplate>
-                          <DataTemplate x:DataType="vm:CommitViewModel">
-                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-                              <TextBlock Grid.Column="0" Text="{Binding ShortHash}" Classes="mono dim"
-                                         VerticalAlignment="Center" />
-                              <StackPanel Grid.Column="1" MinWidth="0">
-                                <TextBlock Text="{Binding Subject}" Classes="strong"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{Binding Author}" Classes="dim"
-                                           TextTrimming="CharacterEllipsis" />
-                              </StackPanel>
-                              <TextBlock Grid.Column="2" Text="{Binding When}" Classes="dimmer"
-                                         VerticalAlignment="Center" />
-                            </Grid>
-                          </DataTemplate>
-                        </ListBox.ItemTemplate>
-                      </ListBox>
-
-                      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                                  IsVisible="{Binding !HasCommits}">
-                        <TextBlock Text="No commits" Classes="section" HorizontalAlignment="Center" />
-                        <TextBlock Classes="meta" HorizontalAlignment="Center"
-                                   TextAlignment="Center" TextWrapping="Wrap" MaxWidth="400"
-                                   Text="This repository has no commits yet, so there is no history and no baseline." />
-                      </StackPanel>
-                    </Panel>
-                  </Grid>
-                </Border>
-              </Panel>
-            </Panel>
-          </Grid>
-
-          <!-- Impact -->
-          <Grid RowDefinitions="Auto,*" RowSpacing="16"
-                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
-                            ConverterParameter={x:Static vm:AppSection.Impact}}">
-
-            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16"
-                  DataContext="{Binding Impact}" x:DataType="vm:ImpactViewModel">
-              <StackPanel Grid.Column="0" Spacing="4" MinWidth="0">
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                  <TextBlock Classes="title" Text="{Binding RootTitle}"
-                             TextTrimming="CharacterEllipsis" />
-                  <Border Classes="chip error" VerticalAlignment="Center"
-                          IsVisible="{Binding IsHighRisk}"
-                          ToolTip.Tip="{Binding RiskRationale}">
-                    <TextBlock Text="{Binding RiskLevelText}" />
-                  </Border>
-                  <Border Classes="chip warning" VerticalAlignment="Center"
-                          IsVisible="{Binding IsModerateRisk}"
-                          ToolTip.Tip="{Binding RiskRationale}">
-                    <TextBlock Text="{Binding RiskLevelText}" />
-                  </Border>
-                  <Border Classes="chip warning" VerticalAlignment="Center"
-                          IsVisible="{Binding IsTruncated}"
-                          ToolTip.Tip="A cap stopped the walk, so the real blast radius is larger than this. Nothing shown is wrong; there is more of it.">
-                    <TextBlock Text="Partial" />
-                  </Border>
-                </StackPanel>
-                <TextBlock Classes="meta mono" Text="{Binding RootSubtitle}"
-                           TextTrimming="CharacterEllipsis" />
-                <TextBlock Classes="dimmer" Text="{Binding ReachText}"
-                           IsVisible="{Binding HasReport}" />
-              </StackPanel>
-
-              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12"
-                          VerticalAlignment="Center">
-                <ProgressBar Width="110" IsIndeterminate="True" VerticalAlignment="Center"
-                             IsVisible="{Binding IsLoading}" />
-                <TextBox Theme="{DynamicResource SearchBoxTheme}"
-                         Width="180" VerticalAlignment="Center"
-                         PlaceholderText="Filter indirect"
-                         IsEnabled="{Binding HasReport}"
-                         Text="{Binding Filter, Mode=TwoWay}" />
-              </StackPanel>
-            </Grid>
-
-            <Panel Grid.Row="1" DataContext="{Binding Impact}" x:DataType="vm:ImpactViewModel">
-
-              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                          IsVisible="{Binding !HasReport}">
-                <TextBlock Text="Nothing analysed yet" Classes="section" HorizontalAlignment="Center" />
-                <TextBlock Classes="meta" HorizontalAlignment="Center"
-                           TextAlignment="Center" TextWrapping="Wrap" MaxWidth="440"
-                           Text="Select a symbol, an endpoint, an entity or a changed symbol and choose Impact to see what a change to it can reach." />
-              </StackPanel>
-
-              <ScrollViewer IsVisible="{Binding HasReport}">
-                <StackPanel Spacing="16">
-
-                  <!-- The answer, before any of it is opened. -->
-                  <Border Classes="card" Padding="14">
-                    <StackPanel Spacing="10">
-                      <TextBlock Classes="overline" Text="What this change can affect" />
-                      <ItemsControl ItemsSource="{Binding Summary}">
-                        <ItemsControl.ItemsPanel>
-                          <ItemsPanelTemplate>
-                            <WrapPanel />
-                          </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                          <DataTemplate x:DataType="vm:ImpactCountViewModel">
-                            <Border Classes="tile" Margin="0,0,10,0" Padding="14,10" MinWidth="150">
-                              <StackPanel>
-                                <TextBlock Text="{Binding Count}" Classes="value"
-                                           Classes.dimmer="{Binding IsEmpty}" />
-                                <TextBlock Text="{Binding Label}" Classes="caption"
-                                           TextWrapping="Wrap" />
-                              </StackPanel>
-                            </Border>
-                          </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                      </ItemsControl>
-                    </StackPanel>
-                  </Border>
-
-                  <!-- Why it reads the way it does. Every property, present or not, with
-                       the fact behind it: a level without its evidence is just a verdict. -->
-                  <Border Classes="card" Padding="14">
-                    <StackPanel Spacing="10">
-                      <Grid ColumnDefinitions="*,Auto">
-                        <TextBlock Grid.Column="0" Classes="overline" Text="Risk surface" />
-                        <TextBlock Grid.Column="1" Classes="dimmer" Text="{Binding RiskRationale}" />
-                      </Grid>
-                      <ItemsControl ItemsSource="{Binding RiskSignals}">
-                        <ItemsControl.ItemTemplate>
-                          <DataTemplate x:DataType="vm:RiskSignalViewModel">
-                            <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10" Margin="0,4">
-                              <Border Grid.Column="0" Classes="glyph"
-                                      Classes.container="{Binding IsPresent}"
-                                      VerticalAlignment="Top">
-                                <TextBlock Text="{Binding Marker}" />
-                              </Border>
-                              <TextBlock Grid.Column="1" Text="{Binding Title}"
-                                         Classes="strong" MinWidth="170"
-                                         Classes.dimmer="{Binding !IsPresent}" />
-                              <TextBlock Grid.Column="2" Text="{Binding Evidence}" Classes="meta"
-                                         TextWrapping="Wrap" />
-                            </Grid>
-                          </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                      </ItemsControl>
-                    </StackPanel>
-                  </Border>
-
-                  <!-- Direct effects, kept apart from transitive ones. -->
-                  <Border Classes="card" Padding="10" IsVisible="{Binding HasDirectCallers}">
-                    <StackPanel Spacing="8">
-                      <TextBlock Classes="overline" Text="Direct callers" />
-                      <ListBox ItemsSource="{Binding DirectCallers}"
-                               SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
-                               Theme="{DynamicResource ResultListTheme}"
-                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                               MaxHeight="240"
-                               ItemTemplate="{StaticResource ImpactRowTemplate}" />
-                    </StackPanel>
-                  </Border>
-
-                  <Border Classes="card" Padding="10" IsVisible="{Binding HasIndirectCallers}">
-                    <StackPanel Spacing="8">
-                      <TextBlock Classes="overline" Text="Indirect callers" />
-                      <TextBlock Classes="dimmer" TextWrapping="Wrap"
-                                 Text="Reached through at least one other call. The hop count is the shortest path, so the nearest are listed first." />
-                      <ListBox ItemsSource="{Binding IndirectCallers}"
-                               SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
-                               Theme="{DynamicResource ResultListTheme}"
-                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                               MaxHeight="320"
-                               ItemTemplate="{StaticResource ImpactRowTemplate}" />
-                    </StackPanel>
-                  </Border>
-
-                  <Border Classes="card" Padding="10" IsVisible="{Binding HasImplementations}">
-                    <StackPanel Spacing="8">
-                      <TextBlock Classes="overline" Text="Implementations and derived types" />
-                      <TextBlock Classes="dimmer" TextWrapping="Wrap"
-                                 Text="These would have to change with it, rather than merely being affected by it." />
-                      <ListBox ItemsSource="{Binding Implementations}"
-                               SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
-                               Theme="{DynamicResource ResultListTheme}"
-                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                               MaxHeight="200"
-                               ItemTemplate="{StaticResource ImpactRowTemplate}" />
-                    </StackPanel>
-                  </Border>
-
-                  <Border Classes="card" Padding="10" IsVisible="{Binding HasEndpoints}">
-                    <StackPanel Spacing="8">
-                      <TextBlock Classes="overline" Text="Potentially affected endpoints" />
-                      <ListBox ItemsSource="{Binding Endpoints}"
-                               SelectedItem="{Binding SelectedEndpoint, Mode=TwoWay}"
-                               Theme="{DynamicResource ResultListTheme}"
-                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                               MaxHeight="240">
-                        <ListBox.ItemTemplate>
-                          <DataTemplate x:DataType="vm:EndpointViewModel">
-                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-                              <Border Grid.Column="0" Classes="verb">
-                                <TextBlock Text="{Binding HttpMethod}" />
-                              </Border>
-                              <StackPanel Grid.Column="1" MinWidth="0">
-                                <TextBlock Text="{Binding Route}" Classes="mono strong"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{Binding Handler}" Classes="dim"
-                                           TextTrimming="CharacterEllipsis" />
-                              </StackPanel>
-                              <Border Grid.Column="2" Classes="chip" VerticalAlignment="Center"
-                                      Classes.warning="{Binding IsAnonymous}"
-                                      IsVisible="{Binding HasAuthorization}">
-                                <TextBlock Text="{Binding Authorization}" />
-                              </Border>
-                            </Grid>
-                          </DataTemplate>
-                        </ListBox.ItemTemplate>
-                      </ListBox>
-                    </StackPanel>
-                  </Border>
-
-                  <Border Classes="card" Padding="10" IsVisible="{Binding HasWorkers}">
-                    <StackPanel Spacing="8">
-                      <TextBlock Classes="overline" Text="Affected background services" />
-                      <TextBlock Classes="dimmer" TextWrapping="Wrap"
-                                 Text="Found by the hosting type they derive from. A change reaching one of these is invisible in any endpoint list." />
-                      <ListBox ItemsSource="{Binding Workers}"
-                               SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
-                               Theme="{DynamicResource ResultListTheme}"
-                               ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                               MaxHeight="180"
-                               ItemTemplate="{StaticResource ImpactRowTemplate}" />
-                    </StackPanel>
-                  </Border>
-
-                  <Border Classes="card" Padding="10" IsVisible="{Binding HasEntities}">
-                    <StackPanel Spacing="8">
-                      <TextBlock Classes="overline" Text="Database entities" />
-                      <ItemsControl ItemsSource="{Binding Entities}">
-                        <ItemsControl.ItemTemplate>
-                          <DataTemplate x:DataType="vm:EntityRowViewModel">
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,3">
-                              <StackPanel Grid.Column="0" MinWidth="0">
-                                <TextBlock Text="{Binding Entity}" Classes="strong"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{Binding Context}" Classes="dim"
-                                           TextTrimming="CharacterEllipsis" />
-                              </StackPanel>
-                              <Border Grid.Column="1" Classes="chip" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding Table}" Classes="mono" />
-                              </Border>
-                            </Grid>
-                          </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                      </ItemsControl>
-                    </StackPanel>
-                  </Border>
-
-                  <Border Classes="card" Padding="10" IsVisible="{Binding HasExternalIntegrations}">
-                    <StackPanel Spacing="8">
-                      <TextBlock Classes="overline" Text="External integrations" />
-                      <ItemsControl ItemsSource="{Binding ExternalIntegrations}">
-                        <ItemsControl.ItemTemplate>
-                          <DataTemplate x:DataType="vm:ExternalRowViewModel">
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,3">
-                              <StackPanel Grid.Column="0" MinWidth="0">
-                                <TextBlock Text="{Binding Resource}" Classes="strong"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{Binding Consumer}" Classes="dim"
-                                           TextTrimming="CharacterEllipsis" />
-                              </StackPanel>
-                              <Border Grid.Column="1" Classes="chip" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding TechnologyLabel}" />
-                              </Border>
-                            </Grid>
-                          </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                      </ItemsControl>
-                    </StackPanel>
-                  </Border>
-
-                  <Border Classes="card" Padding="10" IsVisible="{Binding HasConfiguration}">
-                    <StackPanel Spacing="8">
-                      <TextBlock Classes="overline" Text="Configuration dependencies" />
-                      <ItemsControl ItemsSource="{Binding Configuration}">
-                        <ItemsControl.ItemTemplate>
-                          <DataTemplate x:DataType="vm:ConfigurationRowViewModel">
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,3">
-                              <StackPanel Grid.Column="0" MinWidth="0">
-                                <TextBlock Text="{Binding Key}" Classes="mono strong"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{Binding Consumer}" Classes="dim"
-                                           TextTrimming="CharacterEllipsis" />
-                              </StackPanel>
-                              <Border Grid.Column="1" Classes="chip" VerticalAlignment="Center"
-                                      IsVisible="{Binding HasOptions}">
-                                <TextBlock Text="{Binding Options}" />
-                              </Border>
-                            </Grid>
-                          </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                      </ItemsControl>
-                    </StackPanel>
-                  </Border>
-                </StackPanel>
-              </ScrollViewer>
-            </Panel>
-          </Grid>
-
-          <!-- Context -->
-          <!-- Three columns of one question each: what goes in, what it costs, and exactly
-               what would be exported. Nothing here contacts anything; a pack is assembled
-               locally and handed to an agent by hand. -->
-          <Grid RowDefinitions="Auto,*" RowSpacing="16"
-                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
-                            ConverterParameter={x:Static vm:AppSection.Context}}">
-
-            <StackPanel Grid.Row="0" Spacing="4">
-              <TextBlock Classes="title" Text="Context pack" />
-              <TextBlock Classes="meta" TextWrapping="Wrap"
-                         Text="A focused bundle of what CodeAtlas already knows, for pasting into an external coding agent. Every entry says why it is in the pack, source appears once, and nothing leaves this machine." />
-            </StackPanel>
-
-            <Grid Grid.Row="1" ColumnDefinitions="360,*" ColumnSpacing="16"
-                  DataContext="{Binding Context}" x:DataType="vm:ContextPackViewModel">
-
-              <!-- What can go in. -->
-              <ScrollViewer Grid.Column="0" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Spacing="16">
-
-                  <Border Classes="card" Padding="14">
-                    <StackPanel Spacing="8">
-                      <TextBlock Classes="overline" Text="Task" />
-                      <TextBox AcceptsReturn="True" MinHeight="88" MaxHeight="160"
-                               TextWrapping="Wrap"
-                               PlaceholderText="What should the agent do? This is written into Task.md."
-                               Text="{Binding TaskText, Mode=TwoWay}" />
-                    </StackPanel>
-                  </Border>
-
-                  <Border Classes="card" Padding="14">
-                    <StackPanel Spacing="10">
-                      <TextBlock Classes="overline" Text="Add" />
-                      <TextBlock Text="{Binding FocusTitle}" Classes="strong"
-                                 TextTrimming="CharacterEllipsis" />
-                      <TextBlock Text="{Binding FocusSubtitle}" Classes="meta mono"
-                                 TextWrapping="Wrap" />
-                      <WrapPanel>
-                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
-                                Content="Symbol"
-                                ToolTip.Tip="The declaration itself, with the file it is written in"
-                                Command="{Binding AddCommand}"
-                                CommandParameter="{x:Static model:ContextItemKind.Symbol}" />
-                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
-                                Content="Source file"
-                                ToolTip.Tip="The whole file the selected symbol is declared in"
-                                Command="{Binding AddCommand}"
-                                CommandParameter="{x:Static model:ContextItemKind.SourceFile}" />
-                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
-                                Content="Callers"
-                                Command="{Binding AddCommand}"
-                                CommandParameter="{x:Static model:ContextItemKind.Callers}" />
-                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
-                                Content="Implementations"
-                                Command="{Binding AddCommand}"
-                                CommandParameter="{x:Static model:ContextItemKind.Implementations}" />
-                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
-                                Content="Dependencies"
-                                ToolTip.Tip="What it calls, is constructed with, and names in its signature"
-                                Command="{Binding AddCommand}"
-                                CommandParameter="{x:Static model:ContextItemKind.Dependencies}" />
-                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
-                                Content="Related tests"
-                                Command="{Binding AddCommand}"
-                                CommandParameter="{x:Static model:ContextItemKind.RelatedTests}" />
-                      </WrapPanel>
-
-                      <Border Classes="divider" />
-
-                      <WrapPanel>
-                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
-                                Content="Endpoint flow"
-                                ToolTip.Tip="{Binding EndpointTitle}"
-                                Command="{Binding AddCommand}"
-                                CommandParameter="{x:Static model:ContextItemKind.EndpointFlow}" />
-                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
-                                Content="Impact summary"
-                                ToolTip.Tip="{Binding ImpactTitle}"
-                                Command="{Binding AddCommand}"
-                                CommandParameter="{x:Static model:ContextItemKind.Impact}" />
-                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
-                                Content="Git diff"
-                                ToolTip.Tip="The working tree's diff against its Git baseline"
-                                Command="{Binding AddCommand}"
-                                CommandParameter="{x:Static model:ContextItemKind.GitDiff}" />
-                        <Button Theme="{DynamicResource SecondaryButtonTheme}" Margin="0,0,8,6"
-                                Content="Architecture"
-                                ToolTip.Tip="Projects, container wiring, persistence and external boundaries"
-                                Command="{Binding AddCommand}"
-                                CommandParameter="{x:Static model:ContextItemKind.Architecture}" />
-                      </WrapPanel>
-                    </StackPanel>
-                  </Border>
-
-                  <!-- Suggestions carry their reason on the row: a pack nobody can audit
-                       is not one worth handing on. -->
-                  <Border Classes="card" Padding="14" IsVisible="{Binding HasSuggestions}">
-                    <StackPanel Spacing="10">
-                      <TextBlock Classes="overline" Text="Suggested" />
-                      <TextBlock Classes="dimmer" TextWrapping="Wrap"
-                                 Text="Everything CodeAtlas found about the current selection, with the reason it is relevant and what it would cost." />
-                      <ItemsControl ItemsSource="{Binding Suggestions}">
-                        <ItemsControl.ItemTemplate>
-                          <DataTemplate x:DataType="vm:ContextSuggestionViewModel">
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="0,5">
-                              <StackPanel Grid.Column="0" MinWidth="0">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                  <Border Classes="chip">
-                                    <TextBlock Text="{Binding Kind}" />
-                                  </Border>
-                                  <TextBlock Text="{Binding Title}" Classes="strong"
-                                             VerticalAlignment="Center"
-                                             TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                                <TextBlock Text="{Binding Reason}" Classes="meta"
-                                           TextWrapping="Wrap" Margin="0,3,0,0" />
-                                <TextBlock Text="{Binding CostSummary}" Classes="caption" />
-                              </StackPanel>
-                              <Button Grid.Column="1" VerticalAlignment="Center"
-                                      Theme="{DynamicResource SecondaryButtonTheme}"
-                                      Content="Add"
-                                      Command="{Binding $parent[ItemsControl].((vm:ContextPackViewModel)DataContext).AddSuggestionCommand}"
-                                      CommandParameter="{Binding}" />
-                            </Grid>
-                          </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                      </ItemsControl>
-                    </StackPanel>
-                  </Border>
-                </StackPanel>
-              </ScrollViewer>
-
-              <!-- What is in it, what it costs, and exactly what would be written. -->
-              <Grid Grid.Column="1" RowDefinitions="Auto,Auto,*" RowSpacing="16">
-
-                <Border Grid.Row="0" Classes="card" Padding="14">
-                  <StackPanel Spacing="10">
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                      <TextBlock Grid.Column="0" Classes="overline" Text="Budget" VerticalAlignment="Center" />
-                      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                        <TextBlock Classes="meta" VerticalAlignment="Center" Text="Max tokens" />
-                        <TextBox Theme="{DynamicResource SearchBoxTheme}" Width="120"
-                                 PlaceholderText="none"
-                                 Text="{Binding BudgetText, Mode=TwoWay}" />
-                      </StackPanel>
-                    </Grid>
-
-                    <WrapPanel>
-                      <Border Classes="tile" Margin="0,0,10,0" Padding="14,10" MinWidth="150">
-                        <StackPanel>
-                          <TextBlock Text="{Binding CharactersText}" Classes="value" />
-                          <TextBlock Text="characters" Classes="caption" />
-                        </StackPanel>
-                      </Border>
-                      <Border Classes="tile" Margin="0,0,10,0" Padding="14,10" MinWidth="150">
-                        <StackPanel>
-                          <TextBlock Text="{Binding LinesText}" Classes="value" />
-                          <TextBlock Text="lines" Classes="caption" />
-                        </StackPanel>
-                      </Border>
-                      <Border Classes="tile" Margin="0,0,10,0" Padding="14,10" MinWidth="150">
-                        <StackPanel>
-                          <TextBlock Text="{Binding TokensText}" Classes="value" />
-                          <TextBlock Text="estimated tokens" Classes="caption" />
-                        </StackPanel>
-                      </Border>
-                    </WrapPanel>
-
-                    <ProgressBar Height="6" Minimum="0" Maximum="1"
-                                 IsVisible="{Binding HasBudget}"
-                                 Value="{Binding BudgetFraction}" />
-                    <TextBlock Classes="dimmer" Text="{Binding BudgetSummary}" />
-                    <TextBlock Classes="caption"
-                               Text="Tokens are estimated at one per four characters; CodeAtlas has no tokenizer and asks no service for one." />
-                    <Border Classes="chip error" HorizontalAlignment="Left"
-                            IsVisible="{Binding IsOverBudget}">
-                      <TextBlock Text="{Binding OverBudgetNotice}" />
-                    </Border>
-                  </StackPanel>
-                </Border>
-
-                <Border Grid.Row="1" Classes="card" Padding="10">
-                  <StackPanel Spacing="8">
-                    <Grid ColumnDefinitions="*,Auto">
-                      <TextBlock Grid.Column="0" Classes="overline" Text="In the pack"
-                                 VerticalAlignment="Center" />
-                      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                        <Button Theme="{DynamicResource GhostButtonTheme}" Content="Remove"
-                                Command="{Binding RemoveCommand}"
-                                CommandParameter="{Binding SelectedItem}" />
-                        <Button Theme="{DynamicResource GhostButtonTheme}" Content="Empty"
-                                Command="{Binding ClearCommand}" />
-                      </StackPanel>
-                    </Grid>
-
-                    <TextBlock Classes="dimmer" IsVisible="{Binding !HasItems}" TextWrapping="Wrap"
-                               Text="Nothing added yet. Pick something on the left, or take one of the suggestions." />
-
-                    <ListBox ItemsSource="{Binding Items}"
-                             SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
-                             Theme="{DynamicResource ResultListTheme}"
-                             ItemContainerTheme="{DynamicResource ResultRowTheme}"
-                             MaxHeight="220"
-                             IsVisible="{Binding HasItems}">
-                      <ListBox.ItemTemplate>
-                        <DataTemplate x:DataType="vm:ContextItemViewModel">
-                          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
-                            <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top">
-                              <TextBlock Text="{Binding Kind}" />
-                            </Border>
-                            <StackPanel Grid.Column="1" MinWidth="0">
-                              <TextBlock Text="{Binding Title}" Classes="strong"
-                                         TextTrimming="CharacterEllipsis" />
-                              <TextBlock Text="{Binding Reason}" Classes="caption"
-                                         TextWrapping="Wrap" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="2" HorizontalAlignment="Right">
-                              <TextBlock Text="{Binding Destination}" Classes="caption mono" />
-                              <TextBlock Text="{Binding FileSummary}" Classes="caption"
-                                         HorizontalAlignment="Right"
-                                         IsVisible="{Binding HasFiles}" />
-                            </StackPanel>
-                          </Grid>
-                        </DataTemplate>
-                      </ListBox.ItemTemplate>
-                    </ListBox>
-                  </StackPanel>
-                </Border>
-
-                <!-- The preview is the export: the same rendered files, verbatim. -->
-                <Border Grid.Row="2" Classes="card" Padding="10">
-                  <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8">
-                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
-                      <TextBlock Grid.Column="0" Classes="overline" Text="Preview"
-                                 VerticalAlignment="Center" />
-                      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                        <Button Name="ContextCopyButton" Theme="{DynamicResource SecondaryButtonTheme}"
-                                Content="Copy" IsEnabled="{Binding HasItems}"
-                                ToolTip.Tip="Copy the whole pack to the clipboard" />
-                        <Button Name="ContextExportFolderButton" Theme="{DynamicResource SecondaryButtonTheme}"
-                                Content="Export folder" IsEnabled="{Binding HasItems}" />
-                        <Button Name="ContextExportZipButton" Theme="{DynamicResource SecondaryButtonTheme}"
-                                Content="Export zip" IsEnabled="{Binding HasItems}" />
-                      </StackPanel>
-                    </Grid>
-
-                    <TextBlock Grid.Row="1" Classes="dimmer" TextWrapping="Wrap"
-                               Text="The pack is a folder. Pick a file to read exactly what would be written into it." />
-
-                    <!-- One file at a time: the whole pack in one box would be a hundred
-                         kilobytes of text re-laid-out on every keystroke, and a folder is
-                         read a file at a time anyway. -->
-                    <Grid Grid.Row="2" ColumnDefinitions="260,*" ColumnSpacing="10">
-                      <ListBox Grid.Column="0" ItemsSource="{Binding PreviewFiles}"
-                               SelectedItem="{Binding SelectedPreviewFile, Mode=TwoWay}"
-                               Theme="{DynamicResource ResultListTheme}"
-                               ItemContainerTheme="{DynamicResource ResultRowTheme}">
-                        <ListBox.ItemTemplate>
-                          <DataTemplate x:DataType="vm:ContextPackFileViewModel">
-                            <StackPanel MinWidth="0">
-                              <TextBlock Text="{Binding Path}" Classes="mono"
-                                         TextTrimming="CharacterEllipsis" />
-                              <TextBlock Text="{Binding Summary}" Classes="caption"
-                                         TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
-                          </DataTemplate>
-                        </ListBox.ItemTemplate>
-                      </ListBox>
-
-                      <TextBox Grid.Column="1" Classes="mono" IsReadOnly="True"
-                               AcceptsReturn="True" TextWrapping="NoWrap"
-                               VerticalContentAlignment="Top"
-                               IsVisible="{Binding HasPreview}"
-                               FontSize="{DynamicResource FontSizeSmall}"
-                               Text="{Binding PreviewText}" />
-                    </Grid>
-                  </Grid>
-                </Border>
-              </Grid>
-            </Grid>
-          </Grid>
-
-          <!-- Graph -->
-          <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16"
-                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
-                            ConverterParameter={x:Static vm:AppSection.Graph}}">
-
-            <StackPanel Grid.Row="0" Spacing="4" DataContext="{Binding Graph}"
-                        x:DataType="vm:GraphViewModel">
-              <TextBlock Classes="title" Text="{Binding RootTitle}" TextTrimming="CharacterEllipsis" />
-              <TextBlock Classes="meta mono" Text="{Binding RootSubtitle}"
-                         TextTrimming="CharacterEllipsis" />
-            </StackPanel>
-
-            <Border Grid.Row="1" Classes="card" Padding="14"
-                    DataContext="{Binding Graph}" x:DataType="vm:GraphViewModel">
-              <!-- Wraps rather than clips: the toolbar has to survive a narrow window. -->
-              <WrapPanel>
-
-                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2,20,2"
-                            VerticalAlignment="Center">
-                  <TextBlock Text="Depth" Classes="meta" VerticalAlignment="Center" />
-                  <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
-                          Classes.selected="{Binding IsDepth1}" Content="1"
-                          Command="{Binding SetDepthCommand}" CommandParameter="1" />
-                  <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
-                          Classes.selected="{Binding IsDepth2}" Content="2"
-                          Command="{Binding SetDepthCommand}" CommandParameter="2" />
-                  <Button Theme="{DynamicResource SecondaryButtonTheme}" Classes="segment"
-                          Classes.selected="{Binding IsDepth3}" Content="3"
-                          Command="{Binding SetDepthCommand}" CommandParameter="3" />
-                  <NumericUpDown Value="{Binding Depth, Mode=TwoWay}"
-                                 Minimum="1" Maximum="6" Increment="1"
-                                 FormatString="0" Width="88" Height="28"
-                                 ToolTip.Tip="Custom depth" />
-                </StackPanel>
-
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
-                              IsChecked="{Binding ShowCalls, Mode=TwoWay}" Content="Calls" />
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
-                              IsChecked="{Binding ShowReferences, Mode=TwoWay}" Content="References" />
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
-                              IsChecked="{Binding ShowInheritance, Mode=TwoWay}" Content="Inheritance" />
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
-                              IsChecked="{Binding ShowImplementations, Mode=TwoWay}" Content="Implementations" />
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
-                              IsChecked="{Binding ShowTypeDependencies, Mode=TwoWay}"
-                              Content="Type dependencies" />
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
-                              IsChecked="{Binding ShowComposition, Mode=TwoWay}"
-                              Content="Composition"
-                              ToolTip.Tip="What a type injects, and what the container resolves it to" />
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
-                              IsChecked="{Binding ShowDatabase, Mode=TwoWay}"
-                              Content="Database"
-                              ToolTip.Tip="Entities, the contexts that declare them, and what reads and writes them" />
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
-                              IsChecked="{Binding ShowConfiguration, Mode=TwoWay}"
-                              Content="Configuration"
-                              ToolTip.Tip="Options types and the components that read them" />
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,6,2"
-                              IsChecked="{Binding ShowExternalServices, Mode=TwoWay}"
-                              Content="External services"
-                              ToolTip.Tip="Where the application reaches infrastructure it does not own" />
-
-                <!-- Narrows the nodes rather than the edges, and is offered only while the
-                     working tree has something to narrow to. -->
-                <ToggleButton Theme="{DynamicResource FilterChipTheme}" Margin="0,2,20,2"
-                              IsChecked="{Binding ShowChangedOnly, Mode=TwoWay}"
-                              IsVisible="{Binding CanFilterChanged}"
-                              Content="Changed code"
-                              ToolTip.Tip="Show only the symbols the working tree changed" />
-
-                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2" VerticalAlignment="Center">
-                  <Border Classes="chip warning" IsVisible="{Binding IsTruncated}"
-                          ToolTip.Tip="The neighbourhood is larger than the limits allow. Reduce the depth, or expand single nodes instead.">
-                    <TextBlock Text="Partial" />
-                  </Border>
-                  <TextBlock Classes="meta" Text="{Binding SummaryText}" VerticalAlignment="Center" />
-                  <Button Name="GraphZoomOutButton" Theme="{DynamicResource IconButtonTheme}"
-                          Width="28" Height="28" Content="−" ToolTip.Tip="Zoom out" />
-                  <Button Name="GraphZoomInButton" Theme="{DynamicResource IconButtonTheme}"
-                          Width="28" Height="28" Content="+" ToolTip.Tip="Zoom in" />
-                  <Button Name="GraphFitButton" Theme="{DynamicResource SecondaryButtonTheme}"
-                          Classes="segment" Content="Fit" ToolTip.Tip="Fit the graph in view" />
-                </StackPanel>
-              </WrapPanel>
-            </Border>
-
-            <Border Grid.Row="2" Classes="card" ClipToBounds="True">
-              <Panel>
-                <controls:GraphSurface Name="GraphSurface"
-                                       Background="Transparent"
-                                       CornerRadius="{DynamicResource RadiusCard}"
-                                       IsVisible="{Binding Graph.HasGraph}"
-                                       ContentWidth="{Binding Graph.CanvasWidth}"
-                                       ContentHeight="{Binding Graph.CanvasHeight}"
-                                       FocusX="{Binding Graph.FocusX}"
-                                       FocusY="{Binding Graph.FocusY}"
-                                       ResetToken="{Binding Graph.ViewResetToken}">
-                  <Panel Width="{Binding Graph.CanvasWidth}" Height="{Binding Graph.CanvasHeight}"
-                         HorizontalAlignment="Left" VerticalAlignment="Top">
-                    <controls:GraphEdgeLayer
-                        Edges="{Binding Graph.Edges}"
-                        LineBrush="{DynamicResource TextTertiaryBrush}"
-                        EmphasisBrush="{DynamicResource TextSecondaryBrush}" />
-
-                    <ItemsControl ItemsSource="{Binding Graph.Nodes}">
-                      <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                          <Canvas />
-                        </ItemsPanelTemplate>
-                      </ItemsControl.ItemsPanel>
-                      <ItemsControl.Styles>
-                        <Style Selector="ContentPresenter" x:DataType="vm:GraphNodeViewModel">
-                          <Setter Property="Canvas.Left" Value="{Binding X}" />
-                          <Setter Property="Canvas.Top" Value="{Binding Y}" />
-                        </Style>
-                      </ItemsControl.Styles>
-                      <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="vm:GraphNodeViewModel">
-                          <Button Theme="{DynamicResource SecondaryButtonTheme}"
-                                  Classes="graphnode"
-                                  Classes.selected="{Binding IsSelected}"
-                                  Classes.root="{Binding IsRoot}"
-                                  Width="{x:Static vm:GraphNodeViewModel.Width}"
-                                  Height="{x:Static vm:GraphNodeViewModel.Height}"
-                                  Command="{Binding Commands.Select}"
-                                  CommandParameter="{Binding}"
-                                  ToolTip.Tip="{Binding Symbol.FullyQualifiedName}">
-                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                              <Border Grid.Column="0" Classes="glyph"
-                                      Classes.container="{Binding IsContainer}">
-                                <TextBlock Text="{Binding Glyph}" />
-                              </Border>
-                              <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding Display}" FontWeight="Medium"
-                                           TextTrimming="CharacterEllipsis" />
-                                <!-- A node standing on infrastructure says so instead of
-                                     naming its container: the table or the technology is
-                                     what makes the flow readable without opening it. -->
-                                <TextBlock Text="{Binding Container}" Classes="dim"
-                                           IsVisible="{Binding !HasInfrastructure}"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{Binding Infrastructure}" Classes="dim strong"
-                                           IsVisible="{Binding HasInfrastructure}"
-                                           TextTrimming="CharacterEllipsis" />
-                              </StackPanel>
-                              <Button Grid.Column="2" Theme="{DynamicResource IconButtonTheme}"
-                                      Width="NaN" MinWidth="28" Height="22" FontSize="11"
-                                      Padding="5,0"
-                                      IsVisible="{Binding CanExpand}"
-                                      Command="{Binding Commands.Expand}"
-                                      CommandParameter="{Binding}"
-                                      Content="{Binding HiddenNeighbours, StringFormat='+{0}'}"
-                                      ToolTip.Tip="Show this symbol's remaining neighbours" />
-                              <Button Grid.Column="2" Theme="{DynamicResource IconButtonTheme}"
-                                      Width="NaN" MinWidth="28" Height="22" FontSize="11"
-                                      Padding="5,0"
-                                      IsVisible="{Binding CanCollapse}"
-                                      Command="{Binding Commands.Collapse}"
-                                      CommandParameter="{Binding}"
-                                      Content="−"
-                                      ToolTip.Tip="Collapse this symbol again" />
-                            </Grid>
-                            <Button.ContextMenu>
-                              <ContextMenu>
-                                <MenuItem Header="Focus here"
-                                          Command="{Binding Commands.Focus}"
-                                          CommandParameter="{Binding}" />
-                                <MenuItem Header="Open source"
-                                          Command="{Binding Commands.OpenSource}"
-                                          CommandParameter="{Binding}" />
-                              </ContextMenu>
-                            </Button.ContextMenu>
-                          </Button>
-                        </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                  </Panel>
-                </controls:GraphSurface>
-
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                            IsVisible="{Binding !Graph.HasGraph}">
-                  <!-- An endpoint that cannot be mapped says so here, where the graph would
-                       have been, rather than only in the status bar. -->
-                  <StackPanel Spacing="8" IsVisible="{Binding Graph.HasEndpointNotice}">
-                    <TextBlock Text="Endpoint flow unavailable" Classes="section"
-                               HorizontalAlignment="Center" />
-                    <TextBlock Classes="meta" HorizontalAlignment="Center"
-                               TextAlignment="Center" TextWrapping="Wrap" MaxWidth="380"
-                               Text="{Binding Graph.EndpointNotice}" />
-                    <Button Theme="{DynamicResource SecondaryButtonTheme}"
-                            HorizontalAlignment="Center" Content="Open source"
-                            IsVisible="{Binding SelectedEndpoint.HasSource, FallbackValue=False}"
-                            Command="{Binding OpenEndpointSourceCommand}"
-                            CommandParameter="{Binding SelectedEndpoint}" />
-                  </StackPanel>
-
-                  <StackPanel Spacing="8" IsVisible="{Binding !Graph.HasEndpointNotice}">
-                    <TextBlock Text="No symbol selected" Classes="section" HorizontalAlignment="Center" />
-                    <TextBlock Classes="meta" HorizontalAlignment="Center"
-                               TextAlignment="Center" TextWrapping="Wrap" MaxWidth="380"
-                               Text="Pick a method or type in the explorer or in search results, and its callers, callees, implementations and type dependencies are mapped here." />
-                  </StackPanel>
-                </StackPanel>
-
-                <ProgressBar Width="160" IsIndeterminate="True"
-                             HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,16,0,0"
-                             IsVisible="{Binding Graph.IsLoading}" />
-              </Panel>
-            </Border>
-          </Grid>
-
-          <!-- Diagnostics -->
-          <Grid RowDefinitions="Auto,*" RowSpacing="16"
-                IsVisible="{Binding ActiveSection, Converter={StaticResource SectionIs},
-                            ConverterParameter={x:Static vm:AppSection.Diagnostics}}">
-            <StackPanel Grid.Row="0" Spacing="8">
-              <TextBlock Classes="title" Text="Diagnostics" />
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Border Classes="chip error" IsVisible="{Binding HasErrors}">
-                  <TextBlock Text="{Binding ErrorSummary}" />
-                </Border>
-                <Border Classes="chip warning" IsVisible="{Binding HasWarnings}">
-                  <TextBlock Text="{Binding WarningSummary}" />
-                </Border>
-                <TextBlock Classes="meta" IsVisible="{Binding !HasDiagnostics}"
-                           Text="Everything loaded cleanly." />
-              </StackPanel>
-            </StackPanel>
-
-            <Border Grid.Row="1" Classes="card" Padding="20">
-              <Panel>
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                              IsVisible="{Binding HasDiagnostics}">
-                  <ItemsControl ItemsSource="{Binding Diagnostics}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="model:IndexDiagnostic">
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12" Margin="0,6">
-                          <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top"
-                                  Classes.error="{Binding Severity, Converter={StaticResource SectionIs},
-                                                  ConverterParameter={x:Static model:DiagnosticSeverity.Error}}"
-                                  Classes.warning="{Binding Severity, Converter={StaticResource SectionIs},
-                                                    ConverterParameter={x:Static model:DiagnosticSeverity.Warning}}">
-                            <TextBlock Text="{Binding Severity}" />
-                          </Border>
-                          <StackPanel Grid.Column="1" Spacing="2">
-                            <TextBlock Text="{Binding Project}" FontWeight="Medium"
-                                       IsVisible="{Binding Project, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Message}" Classes="meta" TextWrapping="Wrap" />
-                          </StackPanel>
-                        </Grid>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </ScrollViewer>
-
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                            IsVisible="{Binding !HasDiagnostics}">
-                  <TextBlock Text="No diagnostics" Classes="section" HorizontalAlignment="Center" />
-                  <TextBlock Classes="meta" HorizontalAlignment="Center"
-                             Text="Every project in this workspace loaded and indexed." />
-                </StackPanel>
-              </Panel>
-            </Border>
-          </Grid>
-
-        </Panel>
-
-        <!-- Symbol details -->
-        <Border Grid.Column="1" Classes="card"
-                Width="{DynamicResource DetailsPanelWidth}"
-                Margin="0,24,24,24" Padding="20">
           <Panel>
+            <editor:TextEditor Name="Code"
+                               IsReadOnly="True"
+                               ShowLineNumbers="True"
+                               Background="Transparent"
+                               Padding="8,10"
+                               FontFamily="{DynamicResource MonoFontFamily}"
+                               FontSize="12.5"
+                               HorizontalScrollBarVisibility="Auto"
+                               VerticalScrollBarVisibility="Auto"
+                               IsVisible="{Binding HasSource}" />
 
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
-                        IsVisible="{Binding !HasDetails}">
-              <TextBlock Text="No symbol selected" Classes="section" HorizontalAlignment="Center" />
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Spacing="12" MaxWidth="420"
+                        IsVisible="{Binding !HasSource}">
+              <Border Classes="glyph large" HorizontalAlignment="Center">
+                <Path Classes="icon" Data="{DynamicResource Icon.Code}" Width="18" Height="18" />
+              </Border>
+              <TextBlock Classes="section" HorizontalAlignment="Center"
+                         Text="No file open"
+                         IsVisible="{Binding HasWorkspace}" />
+              <TextBlock Classes="section" HorizontalAlignment="Center"
+                         Text="No solution open"
+                         IsVisible="{Binding !HasWorkspace}" />
               <TextBlock Classes="meta" HorizontalAlignment="Center"
                          TextAlignment="Center" TextWrapping="Wrap"
-                         Text="Pick a symbol in the explorer or in search results to see its metadata and relations." />
+                         Text="Pick an endpoint or a symbol and the code it is declared in opens here. CodeAtlas indexes locally and never sends anything anywhere." />
+            </StackPanel>
+          </Panel>
+        </DockPanel>
+      </Border>
+
+      <!-- ============ Endpoint details: the request execution flow ============ -->
+
+      <Border Grid.Column="2" Classes="card" Width="{DynamicResource DetailsWidth}"
+              ClipToBounds="True"
+              IsVisible="{Binding HasSelectedEndpoint}">
+        <DockPanel Margin="16,14">
+
+          <StackPanel DockPanel.Dock="Top" Spacing="12">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="Endpoint Details" FontSize="15" FontWeight="SemiBold" />
+              <Button Grid.Column="1" Theme="{DynamicResource GhostButtonTheme}"
+                      Content="Open in editor" FontSize="12"
+                      Command="{Binding OpenExternallyCommand}"
+                      CommandParameter="{Binding SelectedEndpoint}" />
+            </Grid>
+
+            <!-- A Grid, not a horizontal StackPanel: a StackPanel measures its children
+                 unbounded, so the route would never trim. -->
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+              <Border Grid.Column="0" Classes="verb"
+                      Classes.get="{Binding SelectedEndpoint.IsGet}"
+                      Classes.post="{Binding SelectedEndpoint.IsPost}"
+                      Classes.put="{Binding SelectedEndpoint.IsPut}"
+                      Classes.delete="{Binding SelectedEndpoint.IsDelete}"
+                      VerticalAlignment="Top" Margin="0,3,0,0">
+                <TextBlock Text="{Binding SelectedEndpoint.HttpMethod}" />
+              </Border>
+              <StackPanel Grid.Column="1" MinWidth="0">
+                <TextBlock Text="{Binding SelectedEndpoint.Route}" Classes="mono"
+                           FontSize="15" FontWeight="SemiBold"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="{Binding SelectedEndpoint.Handler}" Classes="meta"
+                           TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="18">
+              <RadioButton Theme="{DynamicResource TabTheme}" GroupName="DetailsTab"
+                           Content="Execution Trace"
+                           IsChecked="{Binding DetailsTab, Mode=TwoWay,
+                                       Converter={StaticResource Is},
+                                       ConverterParameter={x:Static vm:DetailsTab.ExecutionTrace}}" />
+              <RadioButton Theme="{DynamicResource TabTheme}" GroupName="DetailsTab"
+                           Content="Overview"
+                           IsChecked="{Binding DetailsTab, Mode=TwoWay,
+                                       Converter={StaticResource Is},
+                                       ConverterParameter={x:Static vm:DetailsTab.Overview}}" />
             </StackPanel>
 
-            <ScrollViewer HorizontalScrollBarVisibility="Disabled" IsVisible="{Binding HasDetails}">
-              <StackPanel DataContext="{Binding Details}" x:DataType="vm:SymbolDetailsViewModel"
-                          Spacing="16">
+            <Border Classes="divider" />
+          </StackPanel>
 
-                <StackPanel Spacing="10">
-                  <StackPanel Orientation="Horizontal" Spacing="10">
-                    <Border Classes="glyph large" Classes.container="{Binding IsContainer}">
-                      <TextBlock Text="{Binding Glyph}" />
-                    </Border>
-                    <StackPanel VerticalAlignment="Center">
-                      <TextBlock Text="{Binding Header}" Classes="section"
-                                 TextTrimming="CharacterEllipsis" />
-                      <TextBlock Text="{Binding Kind}" Classes="meta" />
-                    </StackPanel>
-                  </StackPanel>
-                  <SelectableTextBlock Text="{Binding FullyQualifiedName}"
-                                       Classes="meta mono" TextWrapping="Wrap" />
-                </StackPanel>
+          <Panel Margin="0,14,0,0">
 
-                <Border Classes="divider" />
-
-                <StackPanel Spacing="8">
-                  <TextBlock Classes="overline" Text="Source" />
-                  <TextBlock Text="{Binding FileName}" Classes="mono"
-                             TextTrimming="CharacterEllipsis"
-                             ToolTip.Tip="{Binding Location}" />
-                  <SelectableTextBlock Text="{Binding Location}" Classes="caption"
-                                       TextWrapping="Wrap" />
-                  <WrapPanel Margin="0,2,0,0">
-                    <Button Theme="{DynamicResource SecondaryButtonTheme}"
-                            Content="Open in editor" Margin="0,0,8,4"
-                            IsEnabled="{Binding CanOpenSource}"
-                            Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).OpenSourceCommand}" />
-                    <Button Theme="{DynamicResource SecondaryButtonTheme}"
-                            Content="Show in graph" Margin="0,0,8,4"
-                            Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).ShowInGraphCommand}" />
-
-                    <!-- The starting point for a method, a type or an interface: whatever
-                         the details pane is currently showing. -->
-                    <Button Theme="{DynamicResource SecondaryButtonTheme}"
-                            Content="Impact" Margin="0,0,8,4"
-                            ToolTip.Tip="What a change to this symbol can affect"
-                            Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).AnalyzeImpactCommand}" />
-
-                    <Button Theme="{DynamicResource SecondaryButtonTheme}"
-                            Content="Add to context" Margin="0,0,0,4"
-                            ToolTip.Tip="Start a context pack for an external coding agent from this symbol"
-                            Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).AddToContextCommand}" />
-                  </WrapPanel>
-                </StackPanel>
-
-                <Border Classes="divider" />
-
-                <StackPanel Spacing="10">
-                  <TextBlock Classes="overline" Text="Declaration" />
-                  <Grid ColumnDefinitions="96,*" RowDefinitions="Auto,Auto,Auto"
-                        ColumnSpacing="12" RowSpacing="6">
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Namespace" Classes="meta" />
-                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Namespace}"
-                               TextWrapping="Wrap" />
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Project" Classes="meta" />
-                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Project}"
-                               TextTrimming="CharacterEllipsis" />
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Accessibility" Classes="meta" />
-                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Accessibility}" />
-                  </Grid>
-                </StackPanel>
-
-                <StackPanel Spacing="8" IsVisible="{Binding HasRegistrations}">
-                  <TextBlock Classes="overline" Text="Container" />
-                  <ItemsControl ItemsSource="{Binding Registrations}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:RegistrationViewModel">
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
-                          <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top">
-                            <TextBlock Text="{Binding Lifetime}" />
-                          </Border>
-                          <StackPanel Grid.Column="1">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                              <TextBlock Text="{Binding Implementation}" FontWeight="Medium"
-                                         TextTrimming="CharacterEllipsis" />
-                              <Border Classes="chip warning" IsVisible="{Binding !IsExact}"
-                                      ToolTip.Tip="Read from a factory body, which CodeAtlas does not execute.">
-                                <TextBlock Text="inferred" />
-                              </Border>
-                            </StackPanel>
-                            <TextBlock Text="{Binding Service}" Classes="caption"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Origin}" Classes="caption"
-                                       TextTrimming="CharacterEllipsis" />
-                          </StackPanel>
-                        </Grid>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-
-                <StackPanel Spacing="8" IsVisible="{Binding HasEntityMappings}">
-                  <TextBlock Classes="overline" Text="Mapping" />
-                  <ItemsControl ItemsSource="{Binding EntityMappings}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:EntityRowViewModel">
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
-                          <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top">
-                            <TextBlock Text="{Binding Table}" Classes="mono" />
-                          </Border>
-                          <StackPanel Grid.Column="1">
-                            <TextBlock Text="{Binding Entity}" FontWeight="Medium"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Context}" Classes="caption"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Configuration}" Classes="caption"
-                                       IsVisible="{Binding HasConfiguration}"
-                                       TextTrimming="CharacterEllipsis" />
-                          </StackPanel>
-                        </Grid>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-
-                <StackPanel Spacing="8" IsVisible="{Binding HasMigrations}">
-                  <TextBlock Classes="overline" Text="Migrations" />
-                  <ItemsControl ItemsSource="{Binding Migrations}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:MigrationRowViewModel">
-                        <StackPanel Margin="0,3">
-                          <TextBlock Text="{Binding Name}" Classes="mono"
-                                     TextTrimming="CharacterEllipsis" />
-                          <TextBlock Text="{Binding Tables}" Classes="caption"
-                                     TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-
-                <StackPanel Spacing="8" IsVisible="{Binding HasConfiguration}">
-                  <TextBlock Classes="overline" Text="Configuration" />
-                  <ItemsControl ItemsSource="{Binding Configuration}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:ConfigurationRowViewModel">
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
-                          <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top">
-                            <TextBlock Text="{Binding Access}" />
-                          </Border>
-                          <StackPanel Grid.Column="1">
-                            <TextBlock Text="{Binding Key}" Classes="mono"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Consumer}" Classes="caption"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Origin}" Classes="caption"
-                                       TextTrimming="CharacterEllipsis" />
-                          </StackPanel>
-                        </Grid>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-
-                <StackPanel Spacing="8" IsVisible="{Binding HasExternalDependencies}">
-                  <TextBlock Classes="overline" Text="External services" />
-                  <ItemsControl ItemsSource="{Binding ExternalDependencies}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:ExternalRowViewModel">
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
-                          <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top">
-                            <TextBlock Text="{Binding TechnologyLabel}" />
-                          </Border>
-                          <StackPanel Grid.Column="1">
-                            <TextBlock Text="{Binding Resource}" FontWeight="Medium"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Client}" Classes="caption"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Binding}" Classes="caption"
-                                       TextTrimming="CharacterEllipsis" />
-                          </StackPanel>
-                        </Grid>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-
-                <!-- The doors that lead here, found by walking composition backwards. -->
-                <StackPanel Spacing="8" IsVisible="{Binding HasRelatedEndpoints}">
-                  <TextBlock Classes="overline" Text="Reached from" />
-                  <ItemsControl ItemsSource="{Binding RelatedEndpoints}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:EndpointViewModel">
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
-                          <Border Grid.Column="0" Classes="verb" VerticalAlignment="Top">
-                            <TextBlock Text="{Binding HttpMethod}" />
-                          </Border>
-                          <StackPanel Grid.Column="1">
-                            <TextBlock Text="{Binding Route}" Classes="mono"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Handler}" Classes="caption"
-                                       TextTrimming="CharacterEllipsis" />
-                          </StackPanel>
-                        </Grid>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-
-                <!-- What exercises this symbol. Exact is an edge the compiler recorded;
-                     probable was read off names, and says on what grounds. -->
-                <StackPanel Spacing="8" IsVisible="{Binding HasRelatedTests}">
-                  <TextBlock Classes="overline" Text="Related tests" />
-                  <ItemsControl ItemsSource="{Binding RelatedTests}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:RelatedTestViewModel">
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,3">
-                          <Border Grid.Column="0" Classes="chip" VerticalAlignment="Top"
-                                  Classes.warning="{Binding !IsExact}"
-                                  ToolTip.Tip="{Binding Reason}">
-                            <TextBlock Text="{Binding Confidence}" />
-                          </Border>
-                          <StackPanel Grid.Column="1">
-                            <TextBlock Text="{Binding Name}" FontWeight="Medium"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Reason}" Classes="caption"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Source}" Classes="caption"
-                                       TextTrimming="CharacterEllipsis" />
-                          </StackPanel>
-                        </Grid>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-
-                <StackPanel Spacing="8" IsVisible="{Binding HasAttributes}">
-                  <TextBlock Classes="overline" Text="Attributes" />
-                  <ItemsControl ItemsSource="{Binding Attributes}">
-                    <ItemsControl.ItemsPanel>
-                      <ItemsPanelTemplate>
-                        <WrapPanel />
-                      </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="x:String">
-                        <Border Classes="chip" Margin="0,0,6,6">
-                          <TextBlock Text="{Binding}" />
-                        </Border>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-
-                <ItemsControl ItemsSource="{Binding Groups}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:RelationGroup">
-                      <StackPanel Spacing="8" Margin="0,0,0,16">
-                        <TextBlock Classes="overline" Text="{Binding Title}" />
-                        <ItemsControl ItemsSource="{Binding Links}">
-                          <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:RelationLink">
-                              <Panel>
-                                <!-- The label is a TextBlock so that an underscore in a
-                                     symbol name is not swallowed as an access key. -->
-                                <Button Theme="{DynamicResource GhostButtonTheme}"
-                                        HorizontalAlignment="Stretch"
-                                        Command="{Binding NavigateCommand}"
-                                        CommandParameter="{Binding Link}"
-                                        IsVisible="{Binding IsNavigable}"
-                                        ToolTip.Tip="{Binding FullyQualifiedName}">
-                                  <TextBlock Text="{Binding Display}"
-                                             TextTrimming="CharacterEllipsis" />
-                                </Button>
-                                <TextBlock Text="{Binding Display}"
-                                           IsVisible="{Binding !IsNavigable}"
-                                           Classes="meta" Margin="8,6"
-                                           TextTrimming="CharacterEllipsis"
-                                           ToolTip.Tip="{Binding FullyQualifiedName}" />
-                                <Border Classes="chip warning" IsVisible="{Binding !IsExact}"
-                                        HorizontalAlignment="Right" VerticalAlignment="Center"
-                                        Margin="0,0,4,0"
-                                        ToolTip.Tip="The compiler could not resolve this binding; a single candidate was recorded.">
-                                  <TextBlock Text="inferred" />
-                                </Border>
-                              </Panel>
-                            </DataTemplate>
-                          </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                      </StackPanel>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-
+            <!-- Execution Trace -->
+            <DockPanel IsVisible="{Binding DetailsTab, Converter={StaticResource Is},
+                                   ConverterParameter={x:Static vm:DetailsTab.ExecutionTrace}}">
+              <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,10">
+                <TextBlock Text="Request Execution Flow" FontWeight="SemiBold" />
+                <TextBlock Classes="caption" TextWrapping="Wrap"
+                           Text="{Binding TraceSummary}" />
               </StackPanel>
+
+              <Panel>
+                <ListBox ItemsSource="{Binding Trace}"
+                         SelectedItem="{Binding SelectedStep, Mode=TwoWay}"
+                         Theme="{DynamicResource ResultListTheme}"
+                         ItemContainerTheme="{DynamicResource ResultRowTheme}"
+                         IsVisible="{Binding HasTrace}">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:TraceStepViewModel">
+                      <!-- The gutter carries the tree: a rail down the column the step it
+                           follows from sits in, and an elbow into this one. -->
+                      <Grid ColumnDefinitions="Auto,*">
+                        <Panel Grid.Column="0" Width="{Binding GutterWidth}"
+                               IsVisible="{Binding HasGutter}">
+                          <Rectangle Width="1" HorizontalAlignment="Right" Margin="0,0,11,0"
+                                     Fill="{DynamicResource BorderSubtleBrush}" />
+                          <Rectangle Height="1" Width="10"
+                                     HorizontalAlignment="Right" VerticalAlignment="Center"
+                                     Fill="{DynamicResource BorderSubtleBrush}" />
+                        </Panel>
+
+                        <Grid Grid.Column="1" ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                          <Border Grid.Column="0" Classes="stepnumber">
+                            <TextBlock Text="{Binding Number}" />
+                          </Border>
+                          <StackPanel Grid.Column="1" MinWidth="0" Spacing="1">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                              <TextBlock Grid.Column="0" Text="{Binding Display}"
+                                         FontWeight="Medium"
+                                         TextTrimming="CharacterEllipsis" />
+                              <Border Grid.Column="1" Classes="chip"
+                                      IsVisible="{Binding HasRelation}"
+                                      ToolTip.Tip="Runs in place of the step above it">
+                                <TextBlock Text="{Binding Relation}" />
+                              </Border>
+                            </Grid>
+                            <TextBlock Text="{Binding Container}" Classes="caption"
+                                       TextTrimming="CharacterEllipsis" />
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                              <TextBlock Grid.Column="0" Text="{Binding Origin}" Classes="caption" />
+                              <TextBlock Grid.Column="1" Text="{Binding Note}" Classes="caption"
+                                         Foreground="{DynamicResource WarningBrush}"
+                                         IsVisible="{Binding HasNote}"
+                                         TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                          </StackPanel>
+                        </Grid>
+
+                        <Grid.ContextMenu>
+                          <ContextMenu>
+                            <MenuItem
+                                Header="Open in editor"
+                                Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).OpenExternallyCommand}"
+                                CommandParameter="{Binding}" />
+                          </ContextMenu>
+                        </Grid.ContextMenu>
+                      </Grid>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+
+                <TextBlock Classes="meta" TextWrapping="Wrap"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           TextAlignment="Center"
+                           IsVisible="{Binding !HasTrace}"
+                           Text="{Binding TraceSummary}" />
+              </Panel>
+            </DockPanel>
+
+            <!-- Overview -->
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                          IsVisible="{Binding DetailsTab, Converter={StaticResource Is},
+                                      ConverterParameter={x:Static vm:DetailsTab.Overview}}">
+              <ItemsControl ItemsSource="{Binding SelectedEndpoint.Details}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:DetailRow">
+                    <Grid ColumnDefinitions="110,*" ColumnSpacing="10" Margin="0,0,0,10">
+                      <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="meta" />
+                      <SelectableTextBlock Grid.Column="1" Text="{Binding Value}"
+                                           FontSize="12" TextWrapping="Wrap" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
             </ScrollViewer>
           </Panel>
-        </Border>
-
-      </Grid>
-    </Panel>
+        </DockPanel>
+      </Border>
+    </Grid>
   </DockPanel>
 </Window>

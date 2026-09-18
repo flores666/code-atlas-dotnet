@@ -21,17 +21,10 @@ public sealed class IndexWriteSession : IDisposable
     private readonly SqliteTransaction _transaction;
     private readonly SqliteCommand _insertProject;
     private readonly SqliteCommand _insertSymbol;
-    private readonly SqliteCommand _insertProjectReference;
-    private readonly SqliteCommand _insertAttribute;
     private readonly SqliteCommand _insertRelation;
     private readonly SqliteCommand _insertDiagnostic;
-    private readonly SqliteCommand _insertRegistration;
     private readonly SqliteCommand _insertEndpoint;
     private readonly SqliteCommand _insertEndpointDependency;
-    private readonly SqliteCommand _insertEntity;
-    private readonly SqliteCommand _insertMigration;
-    private readonly SqliteCommand _insertConfiguration;
-    private readonly SqliteCommand _insertExternal;
     private bool _completed;
 
     internal IndexWriteSession(SqliteConnection connection)
@@ -41,16 +34,9 @@ public sealed class IndexWriteSession : IDisposable
 
         Execute("""
             DELETE FROM relations;
-            DELETE FROM service_registrations;
             DELETE FROM endpoint_dependencies;
             DELETE FROM endpoints;
-            DELETE FROM data_entities;
-            DELETE FROM data_migrations;
-            DELETE FROM configuration_usages;
-            DELETE FROM external_dependencies;
-            DELETE FROM symbol_attributes;
             DELETE FROM symbols;
-            DELETE FROM project_references;
             DELETE FROM projects;
             DELETE FROM diagnostics;
             DELETE FROM schema_info WHERE key <> 'schema_version';
@@ -72,20 +58,12 @@ public sealed class IndexWriteSession : IDisposable
         _insertSymbol = Prepare(
             """
             INSERT INTO symbols (kind, name, fqn, display, project_id, namespace,
-                                 container_fqn, file_path, line, start_column, end_line, accessibility)
+                                 container_fqn, file_path, line, start_column, accessibility)
             VALUES (@kind, @name, @fqn, @display, @project, @namespace,
-                    @container, @file, @line, @column, @endLine, @accessibility)
+                    @container, @file, @line, @column, @accessibility)
             """,
             "@kind", "@name", "@fqn", "@display", "@project", "@namespace",
-            "@container", "@file", "@line", "@column", "@endLine", "@accessibility");
-
-        _insertProjectReference = Prepare(
-            "INSERT INTO project_references (project_id, target_name) VALUES (@project, @target)",
-            "@project", "@target");
-
-        _insertAttribute = Prepare(
-            "INSERT INTO symbol_attributes (symbol_id, attribute_fqn) VALUES (@symbol, @attribute)",
-            "@symbol", "@attribute");
+            "@container", "@file", "@line", "@column", "@accessibility");
 
         _insertRelation = Prepare(
             """
@@ -98,28 +76,17 @@ public sealed class IndexWriteSession : IDisposable
             "INSERT INTO diagnostics (severity, project, message) VALUES (@severity, @project, @message)",
             "@severity", "@project", "@message");
 
-        _insertRegistration = Prepare(
-            """
-            INSERT INTO service_registrations
-                (service_fqn, service_display, impl_fqn, impl_display,
-                 lifetime, kind, provenance, file_path, line, declaring_member)
-            VALUES (@service, @serviceDisplay, @impl, @implDisplay,
-                    @lifetime, @kind, @provenance, @file, @line, @member)
-            """,
-            "@service", "@serviceDisplay", "@impl", "@implDisplay",
-            "@lifetime", "@kind", "@provenance", "@file", "@line", "@member");
-
         _insertEndpoint = Prepare(
             """
             INSERT INTO endpoints
-                (http_method, route, handler_display, handler_fqn, declaring_fqn, kind,
+                (http_method, route, handler_display, handler_fqn, kind,
                  project_id, file_path, line, requires_auth, allows_anonymous,
                  policies, roles, provenance)
-            VALUES (@method, @route, @handler, @handlerFqn, @declaring, @kind,
+            VALUES (@method, @route, @handler, @handlerFqn, @kind,
                     @project, @file, @line, @auth, @anonymous,
                     @policies, @roles, @provenance)
             """,
-            "@method", "@route", "@handler", "@handlerFqn", "@declaring", "@kind",
+            "@method", "@route", "@handler", "@handlerFqn", "@kind",
             "@project", "@file", "@line", "@auth", "@anonymous",
             "@policies", "@roles", "@provenance");
 
@@ -129,50 +96,6 @@ public sealed class IndexWriteSession : IDisposable
             VALUES (@endpoint, @fqn, @display)
             """,
             "@endpoint", "@fqn", "@display");
-
-        _insertEntity = Prepare(
-            """
-            INSERT INTO data_entities
-                (entity_fqn, entity_display, context_fqn, context_display, set_name,
-                 table_name, schema_name, config_fqn, config_display, project_id, file_path, line)
-            VALUES (@entity, @entityDisplay, @context, @contextDisplay, @set,
-                    @table, @schema, @config, @configDisplay, @project, @file, @line)
-            """,
-            "@entity", "@entityDisplay", "@context", "@contextDisplay", "@set",
-            "@table", "@schema", "@config", "@configDisplay", "@project", "@file", "@line");
-
-        _insertMigration = Prepare(
-            """
-            INSERT INTO data_migrations
-                (name, type_fqn, type_display, context_fqn, context_display,
-                 tables, project_id, file_path, line)
-            VALUES (@name, @type, @typeDisplay, @context, @contextDisplay,
-                    @tables, @project, @file, @line)
-            """,
-            "@name", "@type", "@typeDisplay", "@context", "@contextDisplay",
-            "@tables", "@project", "@file", "@line");
-
-        _insertConfiguration = Prepare(
-            """
-            INSERT INTO configuration_usages
-                (access, config_key, options_fqn, options_display,
-                 consumer_fqn, consumer_display, project_id, file_path, line, provenance)
-            VALUES (@access, @key, @options, @optionsDisplay,
-                    @consumer, @consumerDisplay, @project, @file, @line, @provenance)
-            """,
-            "@access", "@key", "@options", "@optionsDisplay",
-            "@consumer", "@consumerDisplay", "@project", "@file", "@line", "@provenance");
-
-        _insertExternal = Prepare(
-            """
-            INSERT INTO external_dependencies
-                (technology, binding, client_fqn, client_display, name,
-                 consumer_fqn, consumer_display, project_id, file_path, line, provenance)
-            VALUES (@technology, @binding, @client, @clientDisplay, @name,
-                    @consumer, @consumerDisplay, @project, @file, @line, @provenance)
-            """,
-            "@technology", "@binding", "@client", "@clientDisplay", "@name",
-            "@consumer", "@consumerDisplay", "@project", "@file", "@line", "@provenance");
     }
 
     /// <summary>Writes a project row and returns its id, used to scope its symbols.</summary>
@@ -205,35 +128,8 @@ public sealed class IndexWriteSession : IDisposable
             Set(_insertSymbol, "@file", symbol.FilePath);
             Set(_insertSymbol, "@line", symbol.Line);
             Set(_insertSymbol, "@column", symbol.Column);
-            Set(_insertSymbol, "@endLine", symbol.EndLine);
             Set(_insertSymbol, "@accessibility", symbol.Accessibility);
             _insertSymbol.ExecuteNonQuery();
-
-            if (symbol.Attributes.Count == 0)
-            {
-                continue;
-            }
-
-            var symbolId = LastRowId();
-            foreach (var attribute in symbol.Attributes)
-            {
-                Set(_insertAttribute, "@symbol", symbolId);
-                Set(_insertAttribute, "@attribute", attribute);
-                _insertAttribute.ExecuteNonQuery();
-            }
-        }
-    }
-
-    /// <summary>Records what a project was built against, by name.</summary>
-    public void AddProjectReferences(long projectId, IEnumerable<string> referencedProjectNames)
-    {
-        ArgumentNullException.ThrowIfNull(referencedProjectNames);
-
-        foreach (var name in referencedProjectNames)
-        {
-            Set(_insertProjectReference, "@project", projectId);
-            Set(_insertProjectReference, "@target", name);
-            _insertProjectReference.ExecuteNonQuery();
         }
     }
 
@@ -253,26 +149,6 @@ public sealed class IndexWriteSession : IDisposable
         }
     }
 
-    public void AddRegistrations(IEnumerable<ServiceRegistration> registrations)
-    {
-        ArgumentNullException.ThrowIfNull(registrations);
-
-        foreach (var registration in registrations)
-        {
-            Set(_insertRegistration, "@service", registration.ServiceFullyQualifiedName);
-            Set(_insertRegistration, "@serviceDisplay", registration.ServiceDisplay);
-            Set(_insertRegistration, "@impl", registration.ImplementationFullyQualifiedName);
-            Set(_insertRegistration, "@implDisplay", registration.ImplementationDisplay);
-            Set(_insertRegistration, "@lifetime", registration.Lifetime.ToString());
-            Set(_insertRegistration, "@kind", registration.Kind.ToString());
-            Set(_insertRegistration, "@provenance", registration.Provenance.ToString());
-            Set(_insertRegistration, "@file", registration.FilePath);
-            Set(_insertRegistration, "@line", registration.Line);
-            Set(_insertRegistration, "@member", registration.DeclaringMember);
-            _insertRegistration.ExecuteNonQuery();
-        }
-    }
-
     public void AddEndpoints(long projectId, IEnumerable<HttpEndpoint> endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
@@ -283,7 +159,6 @@ public sealed class IndexWriteSession : IDisposable
             Set(_insertEndpoint, "@route", endpoint.Route);
             Set(_insertEndpoint, "@handler", endpoint.HandlerDisplay);
             Set(_insertEndpoint, "@handlerFqn", endpoint.HandlerFullyQualifiedName);
-            Set(_insertEndpoint, "@declaring", endpoint.DeclaringTypeFullyQualifiedName);
             Set(_insertEndpoint, "@kind", endpoint.Kind.ToString());
             Set(_insertEndpoint, "@project", projectId);
             Set(_insertEndpoint, "@file", endpoint.FilePath);
@@ -308,88 +183,6 @@ public sealed class IndexWriteSession : IDisposable
                 Set(_insertEndpointDependency, "@display", dependency.Display);
                 _insertEndpointDependency.ExecuteNonQuery();
             }
-        }
-    }
-
-    public void AddEntities(long projectId, IEnumerable<EntityMapping> entities)
-    {
-        ArgumentNullException.ThrowIfNull(entities);
-
-        foreach (var entity in entities)
-        {
-            Set(_insertEntity, "@entity", entity.EntityFullyQualifiedName);
-            Set(_insertEntity, "@entityDisplay", entity.EntityDisplay);
-            Set(_insertEntity, "@context", entity.ContextFullyQualifiedName);
-            Set(_insertEntity, "@contextDisplay", entity.ContextDisplay);
-            Set(_insertEntity, "@set", entity.SetName);
-            Set(_insertEntity, "@table", entity.TableName);
-            Set(_insertEntity, "@schema", entity.Schema);
-            Set(_insertEntity, "@config", entity.ConfigurationFullyQualifiedName);
-            Set(_insertEntity, "@configDisplay", entity.ConfigurationDisplay);
-            Set(_insertEntity, "@project", projectId);
-            Set(_insertEntity, "@file", entity.FilePath);
-            Set(_insertEntity, "@line", entity.Line);
-            _insertEntity.ExecuteNonQuery();
-        }
-    }
-
-    public void AddMigrations(long projectId, IEnumerable<DataMigration> migrations)
-    {
-        ArgumentNullException.ThrowIfNull(migrations);
-
-        foreach (var migration in migrations)
-        {
-            Set(_insertMigration, "@name", migration.Name);
-            Set(_insertMigration, "@type", migration.TypeFullyQualifiedName);
-            Set(_insertMigration, "@typeDisplay", migration.TypeDisplay);
-            Set(_insertMigration, "@context", migration.ContextFullyQualifiedName);
-            Set(_insertMigration, "@contextDisplay", migration.ContextDisplay);
-            Set(_insertMigration, "@tables", Join(migration.Tables));
-            Set(_insertMigration, "@project", projectId);
-            Set(_insertMigration, "@file", migration.FilePath);
-            Set(_insertMigration, "@line", migration.Line);
-            _insertMigration.ExecuteNonQuery();
-        }
-    }
-
-    public void AddConfiguration(long projectId, IEnumerable<ConfigurationUsage> usages)
-    {
-        ArgumentNullException.ThrowIfNull(usages);
-
-        foreach (var usage in usages)
-        {
-            Set(_insertConfiguration, "@access", usage.Access.ToString());
-            Set(_insertConfiguration, "@key", usage.Key);
-            Set(_insertConfiguration, "@options", usage.OptionsFullyQualifiedName);
-            Set(_insertConfiguration, "@optionsDisplay", usage.OptionsDisplay);
-            Set(_insertConfiguration, "@consumer", usage.ConsumerFullyQualifiedName);
-            Set(_insertConfiguration, "@consumerDisplay", usage.ConsumerDisplay);
-            Set(_insertConfiguration, "@project", projectId);
-            Set(_insertConfiguration, "@file", usage.FilePath);
-            Set(_insertConfiguration, "@line", usage.Line);
-            Set(_insertConfiguration, "@provenance", usage.Provenance.ToString());
-            _insertConfiguration.ExecuteNonQuery();
-        }
-    }
-
-    public void AddExternalDependencies(long projectId, IEnumerable<ExternalDependency> dependencies)
-    {
-        ArgumentNullException.ThrowIfNull(dependencies);
-
-        foreach (var dependency in dependencies)
-        {
-            Set(_insertExternal, "@technology", dependency.Technology.ToString());
-            Set(_insertExternal, "@binding", dependency.Binding.ToString());
-            Set(_insertExternal, "@client", dependency.ClientFullyQualifiedName);
-            Set(_insertExternal, "@clientDisplay", dependency.ClientDisplay);
-            Set(_insertExternal, "@name", dependency.Name);
-            Set(_insertExternal, "@consumer", dependency.ConsumerFullyQualifiedName);
-            Set(_insertExternal, "@consumerDisplay", dependency.ConsumerDisplay);
-            Set(_insertExternal, "@project", projectId);
-            Set(_insertExternal, "@file", dependency.FilePath);
-            Set(_insertExternal, "@line", dependency.Line);
-            Set(_insertExternal, "@provenance", dependency.Provenance.ToString());
-            _insertExternal.ExecuteNonQuery();
         }
     }
 
@@ -427,62 +220,14 @@ public sealed class IndexWriteSession : IDisposable
             JOIN symbols s ON s.fqn = r.source_fqn AND s.project_id = r.project_id
             GROUP BY s.id, r.kind, r.target_fqn, r.target_display;
 
-            UPDATE service_registrations SET
-                service_symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = service_fqn),
-                impl_symbol_id    = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = impl_fqn);
+            UPDATE relations
+            SET target_symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = relations.target_fqn);
 
             UPDATE endpoints SET
-                handler_symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = handler_fqn),
-                declaring_id      = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = declaring_fqn);
+                handler_symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = handler_fqn);
 
             UPDATE endpoint_dependencies SET
                 symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = target_fqn);
-
-            UPDATE data_entities SET
-                entity_symbol_id  = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = entity_fqn),
-                context_symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = context_fqn),
-                config_symbol_id  = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = config_fqn);
-
-            UPDATE data_migrations SET
-                type_symbol_id    = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = type_fqn),
-                context_symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = context_fqn);
-
-            UPDATE configuration_usages SET
-                options_symbol_id  = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = options_fqn),
-                consumer_symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = consumer_fqn);
-
-            UPDATE external_dependencies SET
-                client_symbol_id   = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = client_fqn),
-                consumer_symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = consumer_fqn);
-
-            -- Registrations become graph edges, so the same walk that follows calls and
-            -- inheritance also crosses from an interface to what satisfies it. Registering
-            -- a type as itself adds no edge: it would be a self-loop.
-            INSERT OR IGNORE INTO relations (source_symbol_id, kind, target_fqn, target_display, provenance)
-            SELECT service_symbol_id, 'Resolves', impl_fqn, COALESCE(impl_display, impl_fqn),
-                   CASE WHEN SUM(provenance = 'Exact') > 0 THEN 'Exact' ELSE 'Inferred' END
-            FROM service_registrations
-            WHERE service_symbol_id IS NOT NULL
-              AND impl_fqn IS NOT NULL
-              AND impl_fqn <> service_fqn
-            GROUP BY service_symbol_id, impl_fqn, impl_display;
-
-            -- A navigation property from one entity to another is the relationship, and
-            -- the compiler already recorded it as the property's type. Deriving the
-            -- entity-to-entity edge here costs one join and saves a second analysis pass;
-            -- fluent HasOne/HasMany configuration contributes the same edge directly.
-            INSERT OR IGNORE INTO relations (source_symbol_id, kind, target_fqn, target_display, provenance)
-            SELECT DISTINCT owner.id, 'RelatesToEntity', r.target_fqn, r.target_display, 'Exact'
-            FROM relations r
-            JOIN symbols property ON property.id = r.source_symbol_id AND property.kind IN ('Property', 'Field')
-            JOIN symbols owner    ON owner.fqn = property.container_fqn
-            WHERE r.kind = 'ReturnType'
-              AND owner.fqn <> r.target_fqn
-              AND owner.fqn IN (SELECT entity_fqn FROM data_entities)
-              AND r.target_fqn IN (SELECT entity_fqn FROM data_entities);
-
-            UPDATE relations
-            SET target_symbol_id = (SELECT MIN(s.id) FROM symbols s WHERE s.fqn = relations.target_fqn);
 
             DROP TABLE staged_relations;
             """);
@@ -544,17 +289,10 @@ public sealed class IndexWriteSession : IDisposable
     {
         _insertProject.Dispose();
         _insertSymbol.Dispose();
-        _insertProjectReference.Dispose();
-        _insertAttribute.Dispose();
         _insertRelation.Dispose();
         _insertDiagnostic.Dispose();
-        _insertRegistration.Dispose();
         _insertEndpoint.Dispose();
         _insertEndpointDependency.Dispose();
-        _insertEntity.Dispose();
-        _insertMigration.Dispose();
-        _insertConfiguration.Dispose();
-        _insertExternal.Dispose();
 
         // Rolls back when Complete was never reached, preserving the previous index.
         _transaction.Dispose();

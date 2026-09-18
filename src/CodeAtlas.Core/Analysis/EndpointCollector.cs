@@ -128,7 +128,6 @@ public sealed class EndpointCollector
                             Route = Combine(prefix, suffix),
                             HandlerDisplay = $"{type.Name}.{method.Name}",
                             HandlerFullyQualifiedName = SymbolNaming.FullyQualifiedName(method),
-                            DeclaringTypeFullyQualifiedName = SymbolNaming.FullyQualifiedName(type),
                             Kind = EndpointKind.ControllerAction,
                             ProjectName = _projectName,
                             FilePath = path,
@@ -427,9 +426,6 @@ public sealed class EndpointCollector
                 Route = Normalise($"{Prefix(invocation, model, cancellationToken)}/{route.Trim('/')}"),
                 HandlerDisplay = handler is null ? "inline handler" : SymbolNaming.Display(handler),
                 HandlerFullyQualifiedName = handler is null ? null : SymbolNaming.FullyQualifiedName(handler),
-                DeclaringTypeFullyQualifiedName = handler?.ContainingType is { } container
-                    ? SymbolNaming.FullyQualifiedName(container)
-                    : null,
                 Kind = EndpointKind.MinimalApi,
                 ProjectName = _projectName,
                 FilePath = path,

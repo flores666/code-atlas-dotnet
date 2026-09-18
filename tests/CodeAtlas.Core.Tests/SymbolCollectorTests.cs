@@ -115,16 +115,6 @@ public class SymbolCollectorTests
     }
 
     [Fact]
-    public async Task Captures_attributes()
-    {
-        var data = await CollectAsync();
-
-        Assert.Equal(
-            ["System.ObsoleteAttribute"],
-            Find(data, IndexedSymbolKind.Interface, "IGreeter").Attributes);
-    }
-
-    [Fact]
     public async Task Distinguishes_overloads_by_parameter_types()
     {
         var data = await CollectAsync("""
@@ -161,23 +151,7 @@ public class SymbolCollectorTests
     }
 
     [Fact]
-    public async Task Records_inheritance_and_interface_implementation()
-    {
-        var data = await CollectAsync();
-
-        Assert.Contains(data.Relations, r =>
-            r.SourceFullyQualifiedName == "Sample.Domain.LoudGreeter" &&
-            r.Kind == RelationKind.Inherits &&
-            r.TargetFullyQualifiedName == "Sample.Domain.GreeterBase");
-
-        Assert.Contains(data.Relations, r =>
-            r.SourceFullyQualifiedName == "Sample.Domain.GreeterBase" &&
-            r.Kind == RelationKind.Implements &&
-            r.TargetFullyQualifiedName == "Sample.Domain.IGreeter");
-    }
-
-    [Fact]
-    public async Task Records_references_between_symbols_in_the_solution()
+    public async Task Records_calls_between_symbols_in_the_solution()
     {
         var data = await CollectAsync("""
             namespace N
@@ -196,10 +170,12 @@ public class SymbolCollectorTests
             }
             """);
 
-        // The field initialiser belongs to the field, the call belongs to the method.
+        // The constructor call in the field initialiser belongs to the field; the
+        // invocation belongs to the method.
         Assert.Contains(data.Relations, r =>
-            r.Kind == RelationKind.References &&
-            r.SourceFullyQualifiedName == "N.Caller._helper" && r.TargetFullyQualifiedName == "N.Helper");
+            r.Kind == RelationKind.Calls &&
+            r.SourceFullyQualifiedName == "N.Caller._helper" &&
+            r.TargetFullyQualifiedName.StartsWith("N.Helper.Helper(", StringComparison.Ordinal));
 
         Assert.Contains(data.Relations, r =>
             r.Kind == RelationKind.Calls &&
@@ -207,7 +183,7 @@ public class SymbolCollectorTests
     }
 
     [Fact]
-    public async Task Does_not_record_references_to_symbols_outside_the_solution()
+    public async Task Does_not_record_calls_to_methods_outside_the_solution()
     {
         var data = await CollectAsync("""
             using System.Text;
@@ -223,7 +199,7 @@ public class SymbolCollectorTests
 
         Assert.DoesNotContain(
             data.Relations,
-            r => r.Kind == RelationKind.References && r.TargetFullyQualifiedName.StartsWith("System.", StringComparison.Ordinal));
+            r => r.TargetFullyQualifiedName.StartsWith("System.", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -253,29 +229,6 @@ public class SymbolCollectorTests
     }
 
     [Fact]
-    public async Task Records_a_reference_from_a_field_to_its_declared_type()
-    {
-        var data = await CollectAsync("""
-            namespace N
-            {
-                public class Helper { }
-
-                public class C
-                {
-                    private readonly Helper _helper = new();
-                }
-            }
-            """);
-
-        // The declared type sits outside the declarator, so it is only reached by
-        // treating the field declaration itself as a boundary.
-        Assert.Contains(data.Relations, r =>
-            r.Kind == RelationKind.References &&
-            r.SourceFullyQualifiedName == "N.C._helper" &&
-            r.TargetFullyQualifiedName == "N.Helper");
-    }
-
-    [Fact]
     public async Task Reports_a_diagnostic_instead_of_throwing_when_source_is_broken()
     {
         var data = await CollectAsync("""
@@ -287,7 +240,7 @@ public class SymbolCollectorTests
     }
 
     [Fact]
-    public async Task Records_calls_separately_from_plain_references()
+    public async Task Records_an_invocation_and_a_constructor_run_as_calls()
     {
         var data = await CollectAsync("""
             namespace N
@@ -308,8 +261,7 @@ public class SymbolCollectorTests
             }
             """);
 
-        // The invocation is a call; the type named in `new Helper()` is a reference to
-        // the type, and the constructor it runs is a call of its own.
+        // The invocation is a call, and so is the constructor `new Helper()` runs.
         Assert.Contains(data.Relations, r =>
             r.SourceFullyQualifiedName == "N.Caller.Use()" &&
             r.Kind == RelationKind.Calls &&
@@ -320,15 +272,8 @@ public class SymbolCollectorTests
             r.Kind == RelationKind.Calls &&
             r.TargetFullyQualifiedName.StartsWith("N.Helper.Helper(", StringComparison.Ordinal));
 
-        Assert.Contains(data.Relations, r =>
-            r.SourceFullyQualifiedName == "N.Caller.Use()" &&
-            r.Kind == RelationKind.References &&
-            r.TargetFullyQualifiedName == "N.Helper");
-
-        // The callee's own name must not also be stored as a mention of it.
-        Assert.DoesNotContain(data.Relations, r =>
-            r.Kind == RelationKind.References &&
-            r.TargetFullyQualifiedName == "N.Helper.Value()");
+        // A type is not something that runs, so naming one is not a step of a trace.
+        Assert.DoesNotContain(data.Relations, r => r.TargetFullyQualifiedName == "N.Helper");
     }
 
     [Fact]
@@ -345,70 +290,6 @@ public class SymbolCollectorTests
             r.SourceFullyQualifiedName == "Sample.Domain.LoudGreeter.Greet(System.String)" &&
             r.Kind == RelationKind.Overrides &&
             r.TargetFullyQualifiedName == "Sample.Domain.GreeterBase.Greet(System.String)");
-    }
-
-    [Fact]
-    public async Task Records_parameter_and_return_type_dependencies_reaching_inside_generics()
-    {
-        var data = await CollectAsync("""
-            using System.Collections.Generic;
-
-            namespace N
-            {
-                public class Order { }
-
-                public class Repository
-                {
-                    public List<Order> Load(Order seed) => new();
-
-                    public Order Latest { get; set; } = new();
-                }
-            }
-            """);
-
-        Assert.Contains(data.Relations, r =>
-            r.SourceFullyQualifiedName == "N.Repository.Load(N.Order)" &&
-            r.Kind == RelationKind.ParameterType &&
-            r.TargetFullyQualifiedName == "N.Order");
-
-        // The dependency worth recording inside List<Order> is Order; List itself is
-        // outside the solution and is not indexed.
-        Assert.Contains(data.Relations, r =>
-            r.SourceFullyQualifiedName == "N.Repository.Load(N.Order)" &&
-            r.Kind == RelationKind.ReturnType &&
-            r.TargetFullyQualifiedName == "N.Order");
-
-        Assert.Contains(data.Relations, r =>
-            r.SourceFullyQualifiedName == "N.Repository.Latest" &&
-            r.Kind == RelationKind.ReturnType &&
-            r.TargetFullyQualifiedName == "N.Order");
-
-        Assert.DoesNotContain(data.Relations, r =>
-            r.Kind is RelationKind.ParameterType or RelationKind.ReturnType &&
-            r.TargetFullyQualifiedName.StartsWith("System.", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task Records_constructor_parameters_as_type_dependencies()
-    {
-        var data = await CollectAsync("""
-            namespace N
-            {
-                public interface IClock { }
-
-                public class Service
-                {
-                    public Service(IClock clock) { }
-                }
-            }
-            """);
-
-        var constructor = Find(data, IndexedSymbolKind.Constructor, ".ctor");
-
-        Assert.Contains(data.Relations, r =>
-            r.SourceFullyQualifiedName == constructor.FullyQualifiedName &&
-            r.Kind == RelationKind.ParameterType &&
-            r.TargetFullyQualifiedName == "N.IClock");
     }
 
     [Fact]

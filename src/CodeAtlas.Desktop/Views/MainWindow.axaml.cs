@@ -1,8 +1,7 @@
 using Avalonia.Controls;
-using Avalonia.Input;
-using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using AvaloniaEdit.Highlighting;
 using CodeAtlas.Core.Workspace;
 using CodeAtlas.Desktop.ViewModels;
 
@@ -19,29 +18,36 @@ public sealed partial class MainWindow : Window
 
         OpenFileButton.Click += OnOpenFileClicked;
         OpenFolderButton.Click += OnOpenFolderClicked;
-        EmptyStateOpenButton.Click += OnOpenFileClicked;
 
-        // Zoom and pan describe where the reader is looking, so they stay in the view.
-        GraphZoomInButton.Click += (_, _) => GraphSurface.ZoomIn();
-        GraphZoomOutButton.Click += (_, _) => GraphSurface.ZoomOut();
-        GraphFitButton.Click += (_, _) => GraphSurface.ResetView();
+        Code.SyntaxHighlighting = HighlightingManager.Instance.GetDefinition("C#");
+        Code.Options.HighlightCurrentLine = true;
 
-        ContextCopyButton.Click += OnContextCopyClicked;
-        ContextExportFolderButton.Click += OnContextExportFolderClicked;
-        ContextExportZipButton.Click += OnContextExportZipClicked;
+        // The editor owns a document rather than a bindable string, and revealing a line
+        // is an operation on the control, so the open file is pushed into it here rather
+        // than bound. This is the whole of what the view model cannot express.
+        _viewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainWindowViewModel.Source))
+            {
+                ShowSource(_viewModel.Source);
+            }
+        };
     }
 
-    /// <summary>Ctrl+K puts the caret in the global search box, as the hint in it promises.</summary>
-    protected override void OnKeyDown(KeyEventArgs e)
+    private void ShowSource(SourceViewModel? source)
     {
-        if (e.Key == Key.K && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        if (source is null)
         {
-            SearchBox.Focus();
-            SearchBox.SelectAll();
-            e.Handled = true;
+            Code.Clear();
+            return;
         }
 
-        base.OnKeyDown(e);
+        Code.Text = source.Text;
+
+        var line = Math.Clamp(source.Line, 1, Code.Document.LineCount);
+        Code.TextArea.Caret.Line = line;
+        Code.TextArea.Caret.Column = 1;
+        Code.ScrollToLine(line);
     }
 
     /// <summary>
@@ -51,7 +57,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async void OnOpenFileClicked(object? sender, RoutedEventArgs e)
     {
-        OpenButton.Flyout?.Hide();
+        WorkspaceButton.Flyout?.Hide();
 
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
@@ -76,7 +82,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnOpenFolderClicked(object? sender, RoutedEventArgs e)
     {
-        OpenButton.Flyout?.Hide();
+        WorkspaceButton.Flyout?.Hide();
 
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
@@ -92,55 +98,6 @@ public sealed partial class MainWindow : Window
         if (items.Count > 0 && items[0].TryGetLocalPath() is { } path)
         {
             await _viewModel.OpenAsync(path);
-        }
-    }
-
-    /// <summary>
-    /// The clipboard and the pickers are properties of the window, which is why the
-    /// context pack is handed out from here: the view model renders it, and the window
-    /// puts it where the reader asked for it. Nothing is sent anywhere.
-    /// </summary>
-    private async void OnContextCopyClicked(object? sender, RoutedEventArgs e)
-    {
-        var context = _viewModel.Context;
-
-        if (Clipboard is not { } clipboard)
-        {
-            context.Report("This platform has no clipboard; export the pack to a folder instead.");
-            return;
-        }
-
-        await clipboard.SetTextAsync(context.BuildText());
-        context.Report("Copied the context pack to the clipboard.");
-    }
-
-    private async void OnContextExportFolderClicked(object? sender, RoutedEventArgs e)
-    {
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = "Where should the ContextPack folder be written?",
-            AllowMultiple = false,
-        });
-
-        if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } path)
-        {
-            _viewModel.Context.ExportToDirectory(path);
-        }
-    }
-
-    private async void OnContextExportZipClicked(object? sender, RoutedEventArgs e)
-    {
-        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title = "Save the context pack",
-            SuggestedFileName = "ContextPack.zip",
-            DefaultExtension = "zip",
-            FileTypeChoices = [new FilePickerFileType("Zip archive") { Patterns = ["*.zip"] }],
-        });
-
-        if (file?.TryGetLocalPath() is { } path)
-        {
-            _viewModel.Context.ExportToZip(path);
         }
     }
 

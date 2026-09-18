@@ -1,126 +1,73 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
-using System.Windows.Input;
 using CodeAtlas.Core.Indexing;
 using CodeAtlas.Core.Model;
 using CodeAtlas.Core.Storage;
+using CodeAtlas.Core.Trace;
 using CodeAtlas.Core.Workspace;
 using CodeAtlas.Desktop.Mvvm;
 
 namespace CodeAtlas.Desktop.ViewModels;
 
 /// <summary>
-/// Drives the whole window: opening a workspace, indexing it, and browsing the result.
+/// Drives the whole window: opening a solution, indexing it, browsing what was declared,
+/// reading the source of anything, and tracing what an endpoint executes.
 /// </summary>
 /// <remarks>
-/// Every index read runs on the thread pool; the database serialises them internally.
-/// The analysed repository is only ever read.
+/// Every index read and every file read runs on the thread pool; the database serialises
+/// its own access. The analysed repository is only ever read.
 /// </remarks>
 public sealed class MainWindowViewModel : ObservableObject, IDisposable
 {
-    /// <summary>Keystrokes settle for this long before a search runs.</summary>
-    private static readonly TimeSpan SearchDebounce = TimeSpan.FromMilliseconds(150);
-
-    private const int SearchLimit = 200;
-
     private readonly RecentWorkspaces _recentWorkspaces = new();
     private readonly IndexingService _indexingService = new();
+    private readonly List<EndpointViewModel> _allEndpoints = [];
+    private readonly List<IndexedProject> _allProjects = [];
 
     private SymbolIndexDatabase? _database;
     private WorkspaceTarget? _target;
     private CancellationTokenSource? _indexingCancellation;
-    private CancellationTokenSource? _searchCancellation;
 
-    private string _workspaceTitle = "No workspace open";
+    private string _workspaceTitle = "Choose a solution";
     private string _workspacePath = string.Empty;
-    private string _gitStatus = string.Empty;
-    private string _indexedAtText = string.Empty;
     private string _statusMessage = "Open a solution or project to begin.";
-    private string _searchText = string.Empty;
-    private string _searchSummary = string.Empty;
-    private AppSection _activeSection = AppSection.Overview;
+    private AppSection _activeSection = AppSection.Indexing;
+    private DetailsTab _detailsTab = DetailsTab.ExecutionTrace;
     private IndexHealth _health = IndexHealth.None;
     private bool _hasWorkspace;
     private bool _hasIndex;
     private bool _indexingFailed;
+    private string _indexedAtText = string.Empty;
     private int _projectCount;
     private int _symbolCount;
-    private int _errorCount;
-    private int _warningCount;
     private bool _isIndexing;
     private bool _isProgressIndeterminate = true;
     private double _progressValue;
     private double _progressMaximum = 1;
-    private SymbolDetailsViewModel? _details;
-    private TreeNodeViewModel? _selectedNode;
-    private SearchResultViewModel? _selectedSearchResult;
-    private EndpointViewModel? _selectedEndpoint;
     private string _endpointFilter = string.Empty;
-    private string _infrastructureFilter = string.Empty;
-    private InfrastructureView _infrastructureView = InfrastructureView.Database;
-    private EntityRowViewModel? _selectedEntity;
-    private MigrationRowViewModel? _selectedMigration;
-    private ConfigurationRowViewModel? _selectedConfiguration;
-    private ExternalRowViewModel? _selectedExternalService;
+    private ProjectCardViewModel? _selectedProject;
+    private EndpointViewModel? _selectedEndpoint;
+    private TraceStepViewModel? _selectedStep;
+    private TreeNodeViewModel? _selectedNode;
+    private SourceViewModel? _source;
+    private string _traceSummary = string.Empty;
 
     public MainWindowViewModel()
     {
-        ReindexCommand = new AsyncRelayCommand(_ => ReindexAsync(), _ => _target is not null && !IsIndexing);
+        ReindexCommand = new AsyncRelayCommand(_ => RunIndexingAsync(), _ => _target is not null && !IsIndexing);
         CancelIndexingCommand = new RelayCommand(_ => _indexingCancellation?.Cancel(), _ => IsIndexing);
         OpenRecentCommand = new AsyncRelayCommand(parameter => OpenAsync((string)parameter!));
-        OpenSourceCommand = new RelayCommand(_ => OpenSource(), _ => Details?.CanOpenSource == true);
-        NavigateCommand = new RelayCommand(parameter => Navigate(parameter as SymbolLink));
-        ShowInGraphCommand = new RelayCommand(_ => ActiveSection = AppSection.Graph, _ => HasDetails);
-        OpenEndpointSourceCommand = new RelayCommand(
-            parameter => OpenEndpointSource(parameter as EndpointViewModel));
-        SetInfrastructureViewCommand = new RelayCommand(
-            parameter => InfrastructureView = (InfrastructureView)parameter!);
-        // Picking a node explores from where the reader already is, so it updates the
-        // details pane without moving the graph out from under them; "focus here" is the
-        // explicit way to re-root.
-        Graph.NodeSelected += id => _ = ShowDetailsAsync(id, updateGraphRoot: false);
-        Graph.OpenSourceRequested += OpenSource;
-
-        // A changed symbol is explored the way an endpoint or a resource is: show it, and
-        // open the graph on it, because "what does this change touch" is a graph question.
-        // Every starting point the spec names reduces to a symbol id, so there is one
-        // command rather than one entry point per kind: a method or type from the details
-        // pane, an endpoint's handler, an entity, or a changed symbol.
-        AnalyzeImpactCommand = new RelayCommand(
-            parameter => AnalyzeImpact(SymbolTarget(parameter)),
-            parameter => SymbolTarget(parameter) is not null);
-
-        Impact.SymbolSelected += id => _ = ShowDetailsAsync(id);
-        Impact.EndpointSelected += endpoint => _ = ShowEndpointAsync(new EndpointViewModel(endpoint));
-        Impact.ReportProduced += Context.SetImpact;
-
-        GitChanges.SymbolSelected += id => _ = ShowChangedSymbolAsync(id);
-        GitChanges.ChangesUpdated += changes =>
-        {
-            Graph.SetChangedSymbols(changes.SymbolIds);
-            Context.SetChanges(changes);
-        };
-        GitChanges.StatusReported += message => StatusMessage = message;
-
-        // A context pack is assembled out of what the other sections already answered, so
-        // the same starting points feed it: a symbol from anywhere, an endpoint, an impact
-        // report, the working tree's diff.
-        AddToContextCommand = new AsyncRelayCommand(
-            parameter => AddToContextAsync(SymbolTarget(parameter)),
-            parameter => SymbolTarget(parameter) is not null);
-
-        Context.StatusReported += message => StatusMessage = message;
+        OpenExternallyCommand = new RelayCommand(OpenExternally);
 
         foreach (var path in _recentWorkspaces.Load())
         {
             RecentWorkspaces.Add(new RecentWorkspaceViewModel(path, OpenRecentCommand));
         }
-
-        OnPropertyChanged(nameof(HasRecentWorkspaces));
     }
 
     // ---- workspace ----------------------------------------------------------
 
+    /// <summary>The name shown in the title bar, which is also the solution picker.</summary>
     public string WorkspaceTitle
     {
         get => _workspaceTitle;
@@ -133,458 +80,95 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _workspacePath, value);
     }
 
-    public string GitStatus
-    {
-        get => _gitStatus;
-        private set => SetProperty(ref _gitStatus, value);
-    }
-
-    public bool HasGitRepository => _target?.IsGitRepository == true;
-
-    /// <summary>False until a workspace is opened, which is what the empty state keys off.</summary>
+    /// <summary>False until a solution is opened, which is what the empty state keys off.</summary>
     public bool HasWorkspace
     {
         get => _hasWorkspace;
         private set => SetProperty(ref _hasWorkspace, value);
     }
 
+    /// <summary>The solutions opened before, newest first, offered by the title-bar picker.</summary>
+    public ObservableCollection<RecentWorkspaceViewModel> RecentWorkspaces { get; } = [];
+
+    public bool HasRecentWorkspaces => RecentWorkspaces.Count > 0;
+
     /// <summary>The section the sidebar currently has selected.</summary>
     public AppSection ActiveSection
     {
         get => _activeSection;
-        set
-        {
-            if (SetProperty(ref _activeSection, value))
-            {
-                // The graph and the impact walk only query while they are on screen;
-                // selecting symbols in the tree or in search results costs nothing until
-                // the reader looks at them.
-                Graph.IsActive = value == AppSection.Graph;
-                Impact.IsActive = value == AppSection.Impact;
-            }
-        }
+        set => SetProperty(ref _activeSection, value);
     }
 
-    /// <summary>The semantic neighbourhood of the selected symbol.</summary>
-    public GraphViewModel Graph { get; } = new();
+    public AsyncRelayCommand ReindexCommand { get; }
 
-    /// <summary>How the working tree differs from its Git baseline.</summary>
-    public GitChangesViewModel GitChanges { get; } = new();
+    public RelayCommand CancelIndexingCommand { get; }
 
-    /// <summary>What a change to the selected symbol can affect.</summary>
-    public ImpactViewModel Impact { get; } = new();
+    public AsyncRelayCommand OpenRecentCommand { get; }
 
-    /// <summary>The context pack being assembled for an external coding agent.</summary>
-    public ContextPackViewModel Context { get; } = new();
-
-    /// <summary>Runs impact analysis on a symbol and shows the result.</summary>
-    public RelayCommand AnalyzeImpactCommand { get; }
-
-    /// <summary>Puts a symbol into the context pack and opens the builder on it.</summary>
-    public AsyncRelayCommand AddToContextCommand { get; }
+    /// <summary>Hands a declaration to an external editor, which the viewer does not replace.</summary>
+    public RelayCommand OpenExternallyCommand { get; }
 
     /// <summary>
-    /// The symbol a row stands for, whatever kind of row it came from. Impact analysis and
-    /// the context builder both start from one, and both are reachable from every list.
+    /// Opens a solution, project or directory. A cached index for the same workspace is
+    /// reused as-is; otherwise one is built.
     /// </summary>
-    /// <remarks>
-    /// A null parameter means "whatever is selected", which is what the details pane's own
-    /// buttons pass. An endpoint resolves through its handler, falling back to the
-    /// controller that declares it, because that is the symbol its behaviour lives on.
-    /// </remarks>
-    private long? SymbolTarget(object? parameter) => parameter switch
+    public async Task OpenAsync(string path)
     {
-        EndpointViewModel endpoint =>
-            endpoint.Endpoint.HandlerSymbolId ?? endpoint.Endpoint.DeclaringTypeSymbolId,
-        ChangedSymbolViewModel changed => changed.SymbolId,
-        EntityRowViewModel entity => entity.SymbolId,
-        ExternalRowViewModel external => external.SymbolId,
-        ConfigurationRowViewModel configuration => configuration.SymbolId,
-        SymbolLink link => link.SymbolId,
-        long id => id,
-        _ => Details?.Symbol.Id,
-    };
-
-    private void AnalyzeImpact(long? symbolId)
-    {
-        if (symbolId is not { } id)
+        if (WorkspaceLocator.Resolve(path) is not { } target)
         {
-            StatusMessage = "That row has no declaration in this solution to analyse.";
+            StatusMessage = $"No .sln, .slnx or .csproj was found at '{path}'.";
             return;
         }
 
-        Impact.Analyze(id);
-        ActiveSection = AppSection.Impact;
-    }
+        ClearWorkspace();
 
-    /// <summary>
-    /// Points the context builder at a symbol, puts the symbol itself in the pack, and
-    /// opens the builder — where everything else CodeAtlas knows about it is offered with
-    /// the reason it is relevant.
-    /// </summary>
-    private async Task AddToContextAsync(long? symbolId)
-    {
-        if (_database is not { } database || symbolId is not { } id)
+        _target = target;
+        HasWorkspace = true;
+        WorkspaceTitle = target.DisplayName;
+        WorkspacePath = target.Path;
+
+        RecentWorkspaces.Clear();
+        foreach (var recent in _recentWorkspaces.Add(target.Path))
         {
-            StatusMessage = "That row has no declaration in this solution to add.";
+            RecentWorkspaces.Add(new RecentWorkspaceViewModel(recent, OpenRecentCommand));
+        }
+
+        OnPropertyChanged(nameof(HasRecentWorkspaces));
+
+        try
+        {
+            _database = SymbolIndexDatabase.Open(IndexCache.GetDatabasePath(target.Path));
+        }
+        catch (Exception e)
+        {
+            StatusMessage = $"Could not open the index cache: {e.Message}";
             return;
         }
 
-        var symbol = await Task.Run(() => database.GetSymbol(id));
+        ReindexCommand.RaiseCanExecuteChanged();
 
-        Context.SetFocus(symbol);
-        Context.Add(ContextItemKind.Symbol);
-        ActiveSection = AppSection.Context;
-    }
-
-    /// <summary>
-    /// Opens a changed symbol: its details, and the graph rooted on it.
-    /// </summary>
-    /// <remarks>
-    /// Nothing about this is Git-specific by the time it lands here — the callers, callees,
-    /// implementations, endpoints and entities of a changed method are the ones the index
-    /// already holds. Mapping the diff to a symbol is the whole of the work; navigating
-    /// from it is the existing details pane.
-    /// </remarks>
-    private async Task ShowChangedSymbolAsync(long symbolId)
-    {
-        await ShowDetailsAsync(symbolId);
-
-        if (Details is { } details)
+        if (_database.HasUsableIndexFor(target.Path))
         {
-            StatusMessage = $"{details.Symbol.Display} changed in the working tree.";
-            ActiveSection = AppSection.Graph;
+            StatusMessage = "Loaded the cached index.";
+            RefreshFromIndex();
+            ActiveSection = AppSection.Endpoints;
+        }
+        else
+        {
+            ActiveSection = AppSection.Indexing;
+            await RunIndexingAsync();
         }
     }
 
-    // ---- endpoints ----------------------------------------------------------
+    /// <summary>The directory the workspace was opened from, which paths are shown against.</summary>
+    private string? WorkspaceDirectory => _target is { } target ? Path.GetDirectoryName(target.Path) : null;
 
-    /// <summary>Every HTTP entry point the index found, filtered by <see cref="EndpointFilter"/>.</summary>
-    public ObservableCollection<EndpointViewModel> Endpoints { get; } = [];
+    // ---- indexing -----------------------------------------------------------
 
-    public bool HasEndpoints => Endpoints.Count > 0;
-
-    public int EndpointCount => _allEndpoints.Count;
-
-    public string EndpointFilter
+    public string StatusMessage
     {
-        get => _endpointFilter;
-        set
-        {
-            if (SetProperty(ref _endpointFilter, value))
-            {
-                RefreshEndpoints();
-            }
-        }
-    }
-
-    /// <summary>
-    /// Selecting an endpoint opens its flow: the graph is rooted at the action and seeded
-    /// with the type that carries the injected dependencies, then the section switches to it.
-    /// </summary>
-    public EndpointViewModel? SelectedEndpoint
-    {
-        get => _selectedEndpoint;
-        set
-        {
-            if (SetProperty(ref _selectedEndpoint, value) && value is not null)
-            {
-                _ = ShowEndpointAsync(value);
-            }
-        }
-    }
-
-    public RelayCommand OpenEndpointSourceCommand { get; }
-
-    /// <summary>
-    /// Opens the graph on an endpoint.
-    /// </summary>
-    /// <remarks>
-    /// A controller action is its own root and its declaring type carries the injected
-    /// services. An inline Minimal API handler declares nothing, so the flow is rooted at
-    /// the first thing the lambda reaches and seeded with the rest. An endpoint that
-    /// reaches nothing indexed still opens the section, on a notice saying why: a
-    /// selection that produced nothing at all reads as a broken click.
-    /// </remarks>
-    private async Task ShowEndpointAsync(EndpointViewModel endpoint)
-    {
-        if (_database is not { } database)
-        {
-            return;
-        }
-
-        var target = endpoint.Endpoint;
-        Context.SetEndpoint(target);
-
-        var (details, seeds) = await Task.Run<(SymbolDetails?, IReadOnlyList<long>)>(() =>
-            target.HandlerSymbolId is { } handlerId
-                ? (database.GetDetails(handlerId),
-                   target.DeclaringTypeSymbolId is { } declaringId ? [declaringId] : [])
-                : InlineFlow(database, target));
-
-        Details = details is null ? null : new SymbolDetailsViewModel(details, NavigateCommand);
-        Graph.FocusEndpoint(target, details?.Symbol, seeds);
-
-        StatusMessage = details is null
-            ? $"{endpoint.HttpMethod} {endpoint.Route} reaches nothing indexed in this workspace."
-            : $"{endpoint.HttpMethod} {endpoint.Route} → {details.Symbol.Display}";
-
-        ActiveSection = AppSection.Graph;
-    }
-
-    /// <summary>
-    /// The flow behind an inline handler: rooted at the first symbol it reaches — the
-    /// collector puts the services it is handed before the methods it calls — and seeded
-    /// with the others, so one click maps the whole lambda rather than one arbitrary hop.
-    /// </summary>
-    private static (SymbolDetails? Details, IReadOnlyList<long> Seeds) InlineFlow(
-        SymbolIndexDatabase database,
-        HttpEndpoint endpoint)
-    {
-        var reached = database.GetEndpointDependencies(endpoint.Id)
-            .Select(dependency => dependency.SymbolId)
-            .OfType<long>()
-            .Distinct()
-            .ToList();
-
-        return reached is [var first, .. var rest]
-            ? (database.GetDetails(first), rest)
-            : (null, []);
-    }
-
-    private void OpenEndpointSource(EndpointViewModel? endpoint)
-    {
-        if (endpoint?.Endpoint is { FilePath: { } path } target)
-        {
-            StatusMessage = SourceLauncher.Open(path, target.Line) ?? $"Opened {path}:{target.Line}";
-        }
-    }
-
-    private void RefreshEndpoints()
-    {
-        Endpoints.Clear();
-
-        var filter = EndpointFilter.Trim();
-        foreach (var endpoint in _allEndpoints)
-        {
-            if (filter.Length == 0 ||
-                endpoint.Route.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
-                endpoint.Handler.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
-                endpoint.HttpMethod.Contains(filter, StringComparison.OrdinalIgnoreCase))
-            {
-                Endpoints.Add(endpoint);
-            }
-        }
-
-        OnPropertyChanged(nameof(HasEndpoints));
-        OnPropertyChanged(nameof(EndpointCount));
-    }
-
-    // ---- infrastructure -----------------------------------------------------
-
-    /// <summary>
-    /// The three infrastructure lists, shown one at a time. They are the same three cuts
-    /// the graph filters by, seen as tables instead of as edges.
-    /// </summary>
-    public ObservableCollection<EntityRowViewModel> Entities { get; } = [];
-
-    public ObservableCollection<MigrationRowViewModel> Migrations { get; } = [];
-
-    public ObservableCollection<ConfigurationRowViewModel> ConfigurationKeys { get; } = [];
-
-    public ObservableCollection<ExternalRowViewModel> ExternalServices { get; } = [];
-
-    public RelayCommand SetInfrastructureViewCommand { get; }
-
-    public InfrastructureView InfrastructureView
-    {
-        get => _infrastructureView;
-        set
-        {
-            if (SetProperty(ref _infrastructureView, value))
-            {
-                OnPropertyChanged(nameof(IsDatabaseView));
-                OnPropertyChanged(nameof(IsConfigurationView));
-                OnPropertyChanged(nameof(IsExternalView));
-                OnPropertyChanged(nameof(InfrastructureSubtitle));
-            }
-        }
-    }
-
-    public bool IsDatabaseView => InfrastructureView == InfrastructureView.Database;
-
-    public bool IsConfigurationView => InfrastructureView == InfrastructureView.Configuration;
-
-    public bool IsExternalView => InfrastructureView == InfrastructureView.ExternalServices;
-
-    public string InfrastructureSubtitle => InfrastructureView switch
-    {
-        InfrastructureView.Database =>
-            "EF Core entities, the contexts that declare them, and the migrations that touch their tables.",
-        InfrastructureView.Configuration =>
-            "Configuration keys, sections and options types found in source.",
-        _ => "Where this application reaches infrastructure it does not own.",
-    };
-
-    public string InfrastructureFilter
-    {
-        get => _infrastructureFilter;
-        set
-        {
-            if (SetProperty(ref _infrastructureFilter, value))
-            {
-                RefreshInfrastructure();
-            }
-        }
-    }
-
-    public bool HasEntities => Entities.Count > 0;
-
-    public bool HasMigrations => Migrations.Count > 0;
-
-    public bool HasConfigurationKeys => ConfigurationKeys.Count > 0;
-
-    public bool HasExternalServices => ExternalServices.Count > 0;
-
-    public int InfrastructureCount =>
-        _allEntities.Count + _allConfiguration.Count + _allExternalServices.Count;
-
-    public bool HasInfrastructure => InfrastructureCount > 0;
-
-    public EntityRowViewModel? SelectedEntity
-    {
-        get => _selectedEntity;
-        set
-        {
-            if (SetProperty(ref _selectedEntity, value) && value is not null)
-            {
-                Explore(value.SymbolId, value.HasTable ? $"{value.Entity} · {value.Table}" : value.Entity);
-            }
-        }
-    }
-
-    public MigrationRowViewModel? SelectedMigration
-    {
-        get => _selectedMigration;
-        set
-        {
-            if (SetProperty(ref _selectedMigration, value) && value is not null)
-            {
-                Explore(value.SymbolId, value.Name);
-            }
-        }
-    }
-
-    public ConfigurationRowViewModel? SelectedConfiguration
-    {
-        get => _selectedConfiguration;
-        set
-        {
-            if (SetProperty(ref _selectedConfiguration, value) && value is not null)
-            {
-                Explore(value.SymbolId, value.Key);
-            }
-        }
-    }
-
-    public ExternalRowViewModel? SelectedExternalService
-    {
-        get => _selectedExternalService;
-        set
-        {
-            if (SetProperty(ref _selectedExternalService, value) && value is not null)
-            {
-                Explore(value.SymbolId, $"{value.Consumer} · {value.Resource}");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Opens a resource's flow the way selecting an endpoint opens one: the graph is rooted
-    /// on it and framed to show what reaches it.
-    /// </summary>
-    private void Explore(long? symbolId, string caption)
-    {
-        if (symbolId is not { } id)
-        {
-            StatusMessage = $"{caption} has no declaration in this solution to explore.";
-            return;
-        }
-
-        _ = ShowResourceAsync(id, caption);
-    }
-
-    private async Task ShowResourceAsync(long symbolId, string caption)
-    {
-        if (_database is not { } database)
-        {
-            return;
-        }
-
-        var details = await Task.Run(() => database.GetDetails(symbolId));
-        Details = details is null ? null : new SymbolDetailsViewModel(details, NavigateCommand);
-
-        if (details is not null)
-        {
-            Graph.FocusResource(details.Symbol, caption);
-            ActiveSection = AppSection.Graph;
-        }
-    }
-
-    private void RefreshInfrastructure()
-    {
-        var filter = InfrastructureFilter.Trim();
-
-        Fill(Entities, _allEntities, row =>
-            Matches(filter, row.Entity, row.Table, row.Context, row.Configuration));
-        Fill(Migrations, _allMigrations, row => Matches(filter, row.Name, row.Context, row.Tables));
-        Fill(ConfigurationKeys, _allConfiguration, row =>
-            Matches(filter, row.Key, row.Options, row.Consumer));
-        Fill(ExternalServices, _allExternalServices, row =>
-            Matches(filter, row.Resource, row.Consumer, row.Client, row.TechnologyLabel));
-
-        foreach (var property in (string[])
-                 [
-                     nameof(HasEntities), nameof(HasMigrations), nameof(HasConfigurationKeys),
-                     nameof(HasExternalServices), nameof(InfrastructureCount), nameof(HasInfrastructure),
-                 ])
-        {
-            OnPropertyChanged(property);
-        }
-
-        static void Fill<T>(ObservableCollection<T> view, List<T> all, Func<T, bool> keep)
-        {
-            view.Clear();
-            foreach (var row in all.Where(keep))
-            {
-                view.Add(row);
-            }
-        }
-
-        static bool Matches(string filter, params string[] fields) =>
-            filter.Length == 0 ||
-            fields.Any(field => field.Contains(filter, StringComparison.OrdinalIgnoreCase));
-    }
-
-    // ---- index summary ------------------------------------------------------
-
-    public int ProjectCount
-    {
-        get => _projectCount;
-        private set => SetProperty(ref _projectCount, value);
-    }
-
-    public int SymbolCount
-    {
-        get => _symbolCount;
-        private set => SetProperty(ref _symbolCount, value);
-    }
-
-    /// <summary>When the current index was built, as local wall-clock time.</summary>
-    public string IndexedAtText
-    {
-        get => _indexedAtText;
-        private set => SetProperty(ref _indexedAtText, value);
+        get => _statusMessage;
+        private set => SetProperty(ref _statusMessage, value);
     }
 
     public IndexHealth Health
@@ -601,23 +185,42 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public string IndexStateText => Health switch
     {
-        IndexHealth.Indexing => "Indexing\u2026",
+        IndexHealth.Indexing => "Indexing…",
         IndexHealth.Ready => "Index up to date",
         IndexHealth.Warnings => "Indexed with issues",
         IndexHealth.Failed => "Indexing failed",
         _ => "Not indexed",
     };
 
-    public ObservableCollection<RecentWorkspaceViewModel> RecentWorkspaces { get; } = [];
-
-    public bool HasRecentWorkspaces => RecentWorkspaces.Count > 0;
-
-    // ---- status -------------------------------------------------------------
-
-    public string StatusMessage
+    /// <summary>When the current index was built, as local wall-clock time.</summary>
+    public string IndexedAtText
     {
-        get => _statusMessage;
-        private set => SetProperty(ref _statusMessage, value);
+        get => _indexedAtText;
+        private set => SetProperty(ref _indexedAtText, value);
+    }
+
+    /// <summary>
+    /// What indexing could not do.
+    /// </summary>
+    /// <remarks>
+    /// A partly loadable solution is the normal case rather than a failure, and the reason
+    /// matters: a project whose references are missing contributes no endpoints, which
+    /// looks identical to a project that declares none. This is where that shows.
+    /// </remarks>
+    public ObservableCollection<IndexDiagnostic> Diagnostics { get; } = [];
+
+    public bool HasDiagnostics => Diagnostics.Count > 0;
+
+    public int ProjectCount
+    {
+        get => _projectCount;
+        private set => SetProperty(ref _projectCount, value);
+    }
+
+    public int SymbolCount
+    {
+        get => _symbolCount;
+        private set => SetProperty(ref _symbolCount, value);
     }
 
     public bool IsIndexing
@@ -651,219 +254,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _progressMaximum, value);
     }
 
-    /// <summary>The unfiltered lists; the observable collections above are views of them.</summary>
-    private readonly List<EndpointViewModel> _allEndpoints = [];
-    private readonly List<EntityRowViewModel> _allEntities = [];
-    private readonly List<MigrationRowViewModel> _allMigrations = [];
-    private readonly List<ConfigurationRowViewModel> _allConfiguration = [];
-    private readonly List<ExternalRowViewModel> _allExternalServices = [];
-
-    public ObservableCollection<IndexDiagnostic> Diagnostics { get; } = [];
-
-    public int ErrorCount
-    {
-        get => _errorCount;
-        private set
-        {
-            if (SetProperty(ref _errorCount, value))
-            {
-                OnPropertyChanged(nameof(HasErrors));
-                OnPropertyChanged(nameof(ErrorSummary));
-            }
-        }
-    }
-
-    public int WarningCount
-    {
-        get => _warningCount;
-        private set
-        {
-            if (SetProperty(ref _warningCount, value))
-            {
-                OnPropertyChanged(nameof(HasWarnings));
-                OnPropertyChanged(nameof(WarningSummary));
-            }
-        }
-    }
-
-    public int DiagnosticCount => Diagnostics.Count;
-
-    public bool HasDiagnostics => Diagnostics.Count > 0;
-
-    public bool HasErrors => ErrorCount > 0;
-
-    public bool HasWarnings => WarningCount > 0;
-
-    public string ErrorSummary => ErrorCount == 1 ? "1 error" : $"{ErrorCount} errors";
-
-    public string WarningSummary => WarningCount == 1 ? "1 warning" : $"{WarningCount} warnings";
-
-    // ---- browsing -----------------------------------------------------------
-
-    public ObservableCollection<TreeNodeViewModel> ProjectNodes { get; } = [];
-
-    /// <summary>The indexed projects, listed flat on the overview.</summary>
-    public ObservableCollection<IndexedProject> Projects { get; } = [];
-
-    public TreeNodeViewModel? SelectedNode
-    {
-        get => _selectedNode;
-        set
-        {
-            if (SetProperty(ref _selectedNode, value) && value?.Symbol is { } symbol)
-            {
-                _ = ShowDetailsAsync(symbol.Id);
-            }
-        }
-    }
-
-    public string SearchText
-    {
-        get => _searchText;
-        set
-        {
-            if (SetProperty(ref _searchText, value))
-            {
-                OnPropertyChanged(nameof(HasSearchQuery));
-
-                if (value.Length > 0)
-                {
-                    ActiveSection = AppSection.Search;
-                }
-
-                _ = SearchAsync();
-            }
-        }
-    }
-
-    public ObservableCollection<SearchResultViewModel> SearchResults { get; } = [];
-
-    public bool HasSearchQuery => !string.IsNullOrWhiteSpace(SearchText);
-
-    public bool HasSearchResults => SearchResults.Count > 0;
-
-    public string SearchSummary
-    {
-        get => _searchSummary;
-        private set => SetProperty(ref _searchSummary, value);
-    }
-
-    public SearchResultViewModel? SelectedSearchResult
-    {
-        get => _selectedSearchResult;
-        set
-        {
-            if (SetProperty(ref _selectedSearchResult, value) && value is not null)
-            {
-                _ = ShowDetailsAsync(value.Symbol.Id);
-            }
-        }
-    }
-
-    public SymbolDetailsViewModel? Details
-    {
-        get => _details;
-        private set
-        {
-            if (SetProperty(ref _details, value))
-            {
-                OnPropertyChanged(nameof(HasDetails));
-                OpenSourceCommand.RaiseCanExecuteChanged();
-                ShowInGraphCommand.RaiseCanExecuteChanged();
-                AnalyzeImpactCommand.RaiseCanExecuteChanged();
-                AddToContextCommand.RaiseCanExecuteChanged();
-
-                // The builder acts on whatever is being looked at, so following a link is
-                // all it takes to change what "add callers" means.
-                Context.SetFocus(value?.Symbol);
-            }
-        }
-    }
-
-    public bool HasDetails => Details is not null;
-
-    // ---- commands -----------------------------------------------------------
-
-    public AsyncRelayCommand ReindexCommand { get; }
-
-    public RelayCommand CancelIndexingCommand { get; }
-
-    public AsyncRelayCommand OpenRecentCommand { get; }
-
-    public RelayCommand OpenSourceCommand { get; }
-
-    public RelayCommand NavigateCommand { get; }
-
-    public RelayCommand ShowInGraphCommand { get; }
-
-    /// <summary>
-    /// Opens a solution, project or directory. A cached index for the same workspace is
-    /// reused as-is; otherwise one is built.
-    /// </summary>
-    public async Task OpenAsync(string path)
-    {
-        if (WorkspaceLocator.Resolve(path) is not { } target)
-        {
-            StatusMessage = $"No .sln, .slnx or .csproj was found at '{path}'.";
-            return;
-        }
-
-        ClearWorkspace();
-
-        _target = target;
-        HasWorkspace = true;
-        WorkspaceTitle = target.DisplayName;
-        WorkspacePath = target.Path;
-        GitStatus = target.IsGitRepository
-            ? $"Git repository: {target.GitRoot}"
-            : "Not inside a Git repository";
-        OnPropertyChanged(nameof(HasGitRepository));
-        GitChanges.SetWorkspace(target);
-        Context.SetWorkspace(target);
-        ActiveSection = AppSection.Overview;
-
-        RecentWorkspaces.Clear();
-        foreach (var recent in _recentWorkspaces.Add(target.Path))
-        {
-            RecentWorkspaces.Add(new RecentWorkspaceViewModel(recent, OpenRecentCommand));
-        }
-
-        OnPropertyChanged(nameof(HasRecentWorkspaces));
-
-        try
-        {
-            _database = SymbolIndexDatabase.Open(IndexCache.GetDatabasePath(target.Path));
-        }
-        catch (Exception e)
-        {
-            StatusMessage = $"Could not open the index cache: {e.Message}";
-            return;
-        }
-
-        ReindexCommand.RaiseCanExecuteChanged();
-
-        if (_database.HasUsableIndexFor(target.Path))
-        {
-            StatusMessage = "Loaded the cached index.";
-            RefreshFromIndex();
-        }
-        else
-        {
-            await RunIndexingAsync();
-        }
-    }
-
-    private async Task ReindexAsync()
-    {
-        if (_target is not null)
-        {
-            await RunIndexingAsync();
-        }
-    }
-
     private async Task RunIndexingAsync()
     {
-        if (_target is null || _database is null)
+        if (_target is not { } target || _database is null)
         {
             return;
         }
@@ -886,7 +279,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             ProgressValue = report.CompletedProjects;
         });
 
-        var target = _target;
         var databasePath = IndexCache.GetDatabasePath(target.Path);
 
         try
@@ -907,12 +299,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             StatusMessage = $"Indexing failed: {e.Message}";
             _indexingFailed = true;
-
-            // Git does not depend on the index, so the section still has a file-level
-            // answer to give even when there is nothing to map it onto.
-            GitChanges.SetIndex(null);
             Diagnostics.Add(new IndexDiagnostic(Core.Model.DiagnosticSeverity.Error, null, e.Message));
-            RefreshDiagnosticCounts();
+            OnPropertyChanged(nameof(HasDiagnostics));
         }
         finally
         {
@@ -922,64 +310,41 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// Diagnostics are the normal outcome of a partly loadable solution, so they degrade
+    /// the reported state rather than failing it; only a run that threw is a failure.
+    /// </summary>
+    private void UpdateHealth() => Health = (IsIndexing, _indexingFailed, _hasIndex, HasDiagnostics) switch
+    {
+        (true, _, _, _) => IndexHealth.Indexing,
+        (_, true, _, _) => IndexHealth.Failed,
+        (_, _, false, _) => IndexHealth.None,
+        (_, _, _, true) => IndexHealth.Warnings,
+        _ => IndexHealth.Ready,
+    };
+
     private void RefreshFromIndex()
     {
-        if (_database is null)
+        if (_database is not { } database || _target is not { } target)
         {
             return;
         }
 
-        Details = null;
-        SearchResults.Clear();
-        OnPropertyChanged(nameof(HasSearchResults));
-        SearchSummary = string.Empty;
-        ProjectNodes.Clear();
-        Projects.Clear();
-
-        foreach (var project in _database.GetProjects())
-        {
-            var projectId = project.Id;
-            ProjectNodes.Add(TreeNodeViewModel.ForProject(project, () => LoadNamespacesAsync(projectId)));
-            Projects.Add(project);
-        }
+        _allProjects.Clear();
+        _allProjects.AddRange(database.GetProjects());
 
         Diagnostics.Clear();
-        foreach (var diagnostic in _database.GetDiagnostics())
+        foreach (var diagnostic in database.GetDiagnostics())
         {
             Diagnostics.Add(diagnostic);
         }
 
-        RefreshDiagnosticCounts();
-        Graph.SetDatabase(_database);
-
-        Impact.SetDatabase(_database);
-
-        // A pack is about one index: its entries name row ids, and a rebuild can move
-        // them. Handing over the new index starts a new pack rather than keeping one whose
-        // contents may no longer mean what they did.
-        Context.SetDatabase(_database);
-
-        // Re-read Git against the index that has just become current: a reindex can move
-        // every declaration's recorded span, and the changed set is derived from those.
-        GitChanges.SetIndex(_database);
+        OnPropertyChanged(nameof(HasDiagnostics));
 
         _allEndpoints.Clear();
-        _allEndpoints.AddRange(_database.GetEndpoints().Select(endpoint => new EndpointViewModel(endpoint)));
-        RefreshEndpoints();
+        _allEndpoints.AddRange(database.GetEndpoints().Select(endpoint => new EndpointViewModel(endpoint)));
 
-        _allEntities.Clear();
-        _allEntities.AddRange(_database.GetEntities().Select(entity => new EntityRowViewModel(entity)));
-        _allMigrations.Clear();
-        _allMigrations.AddRange(_database.GetMigrations().Select(migration => new MigrationRowViewModel(migration)));
-        _allConfiguration.Clear();
-        _allConfiguration.AddRange(
-            _database.GetConfigurationUsages().Select(usage => new ConfigurationRowViewModel(usage)));
-        _allExternalServices.Clear();
-        _allExternalServices.AddRange(
-            _database.GetExternalDependencies().Select(dependency => new ExternalRowViewModel(dependency)));
-        RefreshInfrastructure();
-
-        if (_database.ReadMetadata() is { } metadata)
+        if (database.ReadMetadata() is { } metadata)
         {
             _hasIndex = true;
             ProjectCount = metadata.ProjectCount;
@@ -996,36 +361,75 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             IndexedAtText = string.Empty;
         }
 
-        UpdateHealth();
-
-        if (!string.IsNullOrWhiteSpace(SearchText))
+        Projects.Clear();
+        Projects.Add(ProjectCardViewModel.ForSolution(target, _allProjects.Count, SymbolCount));
+        foreach (var project in _allProjects)
         {
-            _ = SearchAsync();
+            Projects.Add(ProjectCardViewModel.ForProject(project));
+        }
+
+        // Assigning the solution card re-scopes everything, which is what fills the tree
+        // and the endpoint list.
+        SelectedProject = Projects[0];
+
+        UpdateHealth();
+    }
+
+    // ---- the project strip, which scopes everything under it ----------------
+
+    /// <summary>The open solution, then each project in it.</summary>
+    public ObservableCollection<ProjectCardViewModel> Projects { get; } = [];
+
+    public bool HasProjects => Projects.Count > 0;
+
+    public ProjectCardViewModel? SelectedProject
+    {
+        get => _selectedProject;
+        set
+        {
+            if (!SetProperty(ref _selectedProject, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(HasProjects));
+            RefreshTree();
+            RefreshEndpoints();
         }
     }
 
-    private void RefreshDiagnosticCounts()
+    /// <summary>The projects in scope: one, or all of them under the solution card.</summary>
+    private IEnumerable<IndexedProject> ScopedProjects =>
+        SelectedProject?.ProjectName is { } name
+            ? _allProjects.Where(project => project.Name == name)
+            : _allProjects;
+
+    // ---- the explorer tree --------------------------------------------------
+
+    public ObservableCollection<TreeNodeViewModel> ProjectNodes { get; } = [];
+
+    /// <summary>Selecting a symbol opens the file it is declared in, at its declaration.</summary>
+    public TreeNodeViewModel? SelectedNode
     {
-        ErrorCount = Diagnostics.Count(diagnostic => diagnostic.Severity == Core.Model.DiagnosticSeverity.Error);
-        WarningCount = Diagnostics.Count - ErrorCount;
-        OnPropertyChanged(nameof(DiagnosticCount));
-        OnPropertyChanged(nameof(HasDiagnostics));
+        get => _selectedNode;
+        set
+        {
+            if (SetProperty(ref _selectedNode, value) && value?.Symbol is { } symbol)
+            {
+                _ = ShowSourceAsync(symbol);
+            }
+        }
     }
 
-    /// <summary>
-    /// Diagnostics are the normal outcome of a partly loadable solution, so they degrade
-    /// the reported state rather than failing it; only a run that threw is a failure.
-    /// </summary>
-    private void UpdateHealth() => Health = (IsIndexing, _indexingFailed, _hasIndex, HasDiagnostics) switch
+    private void RefreshTree()
     {
-        (true, _, _, _) => IndexHealth.Indexing,
-        (_, true, _, _) => IndexHealth.Failed,
-        (_, _, false, _) => IndexHealth.None,
-        (_, _, _, true) => IndexHealth.Warnings,
-        _ => IndexHealth.Ready,
-    };
-
-    // ---- tree ---------------------------------------------------------------
+        ProjectNodes.Clear();
+        foreach (var project in ScopedProjects)
+        {
+            var projectId = project.Id;
+            ProjectNodes.Add(TreeNodeViewModel.ForProject(project, () => LoadNamespacesAsync(projectId)));
+        }
+    }
 
     private Task<IReadOnlyList<TreeNodeViewModel>> LoadNamespacesAsync(long projectId) =>
         QueryAsync(database => database
@@ -1046,8 +450,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private Task<IReadOnlyList<TreeNodeViewModel>> LoadMembersAsync(string containerFullyQualifiedName) =>
         QueryAsync(database => database
             .GetMembers(containerFullyQualifiedName)
-            .Select(member => member.Kind is IndexedSymbolKind.Class or IndexedSymbolKind.Interface
-                    or IndexedSymbolKind.Record or IndexedSymbolKind.Struct or IndexedSymbolKind.Enum
+            .Select(member => IndexedSymbolKinds.IsType(member.Kind)
                 ? TreeNodeViewModel.ForType(member, () => LoadMembersAsync(member.FullyQualifiedName))
                 : TreeNodeViewModel.ForMember(member))
             .ToList());
@@ -1063,126 +466,220 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return await Task.Run(() => query(database));
     }
 
-    // ---- search and details -------------------------------------------------
+    // ---- endpoints and their traces -----------------------------------------
 
-    private async Task SearchAsync()
+    /// <summary>The HTTP entry points in scope, filtered by <see cref="EndpointFilter"/>.</summary>
+    public ObservableCollection<EndpointViewModel> Endpoints { get; } = [];
+
+    public bool HasEndpoints => Endpoints.Count > 0;
+
+    public int EndpointCount => _allEndpoints.Count;
+
+    public bool HasAnyEndpoints => _allEndpoints.Count > 0;
+
+    public string EndpointFilter
     {
-        _searchCancellation?.Cancel();
-        _searchCancellation?.Dispose();
-        _searchCancellation = new CancellationTokenSource();
-
-        var cancellationToken = _searchCancellation.Token;
-        var query = SearchText;
-
-        if (_database is not { } database || string.IsNullOrWhiteSpace(query))
+        get => _endpointFilter;
+        set
         {
-            SearchResults.Clear();
-            OnPropertyChanged(nameof(HasSearchResults));
-            SearchSummary = string.Empty;
-            return;
-        }
-
-        try
-        {
-            // Lets a burst of keystrokes settle before touching the index.
-            await Task.Delay(SearchDebounce, cancellationToken);
-
-            var results = await Task.Run(() => database.Search(query, SearchLimit), cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-
-            SearchResults.Clear();
-            foreach (var result in results)
+            if (SetProperty(ref _endpointFilter, value))
             {
-                SearchResults.Add(new SearchResultViewModel(result));
+                RefreshEndpoints();
             }
-
-            OnPropertyChanged(nameof(HasSearchResults));
-
-            SearchSummary = results.Count switch
-            {
-                0 => "No matches",
-                SearchLimit => $"First {SearchLimit} matches",
-                1 => "1 match",
-                _ => $"{results.Count} matches",
-            };
-        }
-        catch (OperationCanceledException)
-        {
-            // Superseded by a newer keystroke.
         }
     }
 
     /// <summary>
-    /// Shows a symbol. <paramref name="updateGraphRoot"/> is false only when the selection
-    /// came from the graph itself, which must not re-centre on every click.
+    /// Selecting an endpoint traces it and opens its handler: the flow on the right, the
+    /// code it starts in in the middle.
     /// </summary>
-    private async Task ShowDetailsAsync(long symbolId, bool updateGraphRoot = true)
+    public EndpointViewModel? SelectedEndpoint
     {
-        if (_database is not { } database)
+        get => _selectedEndpoint;
+        set
+        {
+            if (SetProperty(ref _selectedEndpoint, value))
+            {
+                OnPropertyChanged(nameof(HasSelectedEndpoint));
+                _ = TraceAsync(value);
+            }
+        }
+    }
+
+    public bool HasSelectedEndpoint => SelectedEndpoint is not null;
+
+    /// <summary>The selected endpoint's execution trace, in reading order.</summary>
+    public ObservableCollection<TraceStepViewModel> Trace { get; } = [];
+
+    public bool HasTrace => Trace.Count > 0;
+
+    /// <summary>Selecting a step opens the code it runs.</summary>
+    public TraceStepViewModel? SelectedStep
+    {
+        get => _selectedStep;
+        set
+        {
+            if (SetProperty(ref _selectedStep, value) && value is not null)
+            {
+                _ = ShowSourceAsync(value.Symbol);
+            }
+        }
+    }
+
+    /// <summary>How much of the flow is shown, and what stopped it when something did.</summary>
+    public string TraceSummary
+    {
+        get => _traceSummary;
+        private set => SetProperty(ref _traceSummary, value);
+    }
+
+    public DetailsTab DetailsTab
+    {
+        get => _detailsTab;
+        set => SetProperty(ref _detailsTab, value);
+    }
+
+    private void RefreshEndpoints()
+    {
+        var scope = SelectedProject?.ProjectName;
+        var filter = EndpointFilter.Trim();
+
+        Endpoints.Clear();
+        foreach (var endpoint in _allEndpoints)
+        {
+            var inScope = scope is null || endpoint.Endpoint.ProjectName == scope;
+            var matches = filter.Length == 0 ||
+                          endpoint.Route.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                          endpoint.Handler.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                          endpoint.HttpMethod.Contains(filter, StringComparison.OrdinalIgnoreCase);
+
+            if (inScope && matches)
+            {
+                Endpoints.Add(endpoint);
+            }
+        }
+
+        OnPropertyChanged(nameof(HasEndpoints));
+        OnPropertyChanged(nameof(HasAnyEndpoints));
+        OnPropertyChanged(nameof(EndpointCount));
+
+        // A selection the new scope or filter no longer contains has to go, or the
+        // details panel keeps describing a row that is not on screen.
+        if (SelectedEndpoint is { } selected && !Endpoints.Contains(selected))
+        {
+            SelectedEndpoint = null;
+        }
+    }
+
+    private async Task TraceAsync(EndpointViewModel? endpoint)
+    {
+        Trace.Clear();
+        OnPropertyChanged(nameof(HasTrace));
+        TraceSummary = string.Empty;
+
+        if (_database is not { } database || endpoint is null)
         {
             return;
         }
 
-        var details = await Task.Run(() => database.GetDetails(symbolId));
-        Details = details is null ? null : new SymbolDetailsViewModel(details, NavigateCommand);
+        var trace = await Task.Run(() => EndpointTraceBuilder.Build(database, endpoint.Endpoint));
 
-        if (updateGraphRoot)
+        foreach (var step in trace.Steps)
         {
-            Graph.SetRoot(details?.Symbol);
+            Trace.Add(new TraceStepViewModel(step, Trace.Count + 1));
+        }
+
+        OnPropertyChanged(nameof(HasTrace));
+
+        TraceSummary = (trace.Steps.Count, trace.Truncated) switch
+        {
+            (0, _) => "Nothing this endpoint reaches is declared in this solution.",
+            (_, true) => $"First {trace.Steps.Count} steps; the flow is longer than that.",
+            (1, _) => "1 step",
+            var (count, _) => $"{count} steps",
+        };
+
+        // The first step is where the request lands, so that is the code to show.
+        SelectedStep = Trace.FirstOrDefault();
+    }
+
+    // ---- source -------------------------------------------------------------
+
+    /// <summary>The file open in the viewer, or <c>null</c> when nothing has been opened.</summary>
+    public SourceViewModel? Source
+    {
+        get => _source;
+        private set
+        {
+            if (SetProperty(ref _source, value))
+            {
+                OnPropertyChanged(nameof(HasSource));
+            }
         }
     }
 
-    private void Navigate(SymbolLink? link)
+    public bool HasSource => Source is not null;
+
+    private async Task ShowSourceAsync(IndexedSymbol symbol)
     {
-        if (link?.SymbolId is { } symbolId)
+        var directory = WorkspaceDirectory;
+        var source = await Task.Run(() => SourceViewModel.Load(symbol, directory));
+
+        if (source is null)
         {
-            _ = ShowDetailsAsync(symbolId);
+            StatusMessage = symbol.FilePath is { Length: > 0 } path
+                ? $"Could not open {path}."
+                : $"{symbol.Display} has no source file in this solution.";
+            return;
         }
+
+        Source = source;
+        StatusMessage = $"{source.FileName}:{source.Line}";
     }
 
-    private void OpenSource()
+    /// <summary>
+    /// Hands whatever the row stands for to an external editor. The viewer shows the code;
+    /// this is for when the reader wants to change it.
+    /// </summary>
+    private void OpenExternally(object? parameter)
     {
-        if (Details is { } details)
+        var (path, line) = parameter switch
         {
-            OpenSource(details.Symbol);
-        }
-    }
+            TraceStepViewModel step => (step.Symbol.FilePath, step.Symbol.Line),
+            EndpointViewModel endpoint => (endpoint.Endpoint.FilePath, endpoint.Endpoint.Line),
+            TreeNodeViewModel { Symbol: { } symbol } => (symbol.FilePath, symbol.Line),
+            _ => (Source?.FilePath, Source?.Line),
+        };
 
-    private void OpenSource(IndexedSymbol symbol)
-    {
-        StatusMessage = SourceLauncher.Open(symbol.FilePath ?? string.Empty, symbol.Line)
-                        ?? $"Opened {symbol.FilePath}:{symbol.Line}";
+        StatusMessage = path is null
+            ? "That row has no declaration in this solution to open."
+            : SourceLauncher.Open(path, line) ?? $"Opened {path}:{line}";
     }
 
     private void ClearWorkspace()
     {
-        Graph.SetDatabase(null);
-        Impact.SetDatabase(null);
-        GitChanges.SetWorkspace(null);
-        Context.SetWorkspace(null);
         _database?.Dispose();
         _database = null;
 
-        ProjectNodes.Clear();
-        Projects.Clear();
+        SelectedEndpoint = null;
+        SelectedStep = null;
+        SelectedNode = null;
+        Source = null;
+        _allProjects.Clear();
         _allEndpoints.Clear();
+        Projects.Clear();
+        SelectedProject = null;
+        ProjectNodes.Clear();
         RefreshEndpoints();
-        _allEntities.Clear();
-        _allMigrations.Clear();
-        _allConfiguration.Clear();
-        _allExternalServices.Clear();
-        RefreshInfrastructure();
-        SearchResults.Clear();
-        OnPropertyChanged(nameof(HasSearchResults));
+
         Diagnostics.Clear();
-        Details = null;
-        SearchSummary = string.Empty;
+        OnPropertyChanged(nameof(HasDiagnostics));
+        OnPropertyChanged(nameof(HasProjects));
         IndexedAtText = string.Empty;
         ProjectCount = 0;
         SymbolCount = 0;
         _hasIndex = false;
         _indexingFailed = false;
-        RefreshDiagnosticCounts();
         UpdateHealth();
     }
 
@@ -1190,7 +687,6 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         _indexingCancellation?.Cancel();
         _indexingCancellation?.Dispose();
-        _searchCancellation?.Dispose();
         _database?.Dispose();
     }
 }

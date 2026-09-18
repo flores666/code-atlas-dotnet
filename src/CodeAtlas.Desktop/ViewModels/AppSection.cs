@@ -1,18 +1,18 @@
 namespace CodeAtlas.Desktop.ViewModels;
 
-/// <summary>The main-content sections reachable from the sidebar.</summary>
+/// <summary>The three things the sidebar switches between.</summary>
 public enum AppSection
 {
-    Overview,
+    Indexing,
     Explorer,
-    Search,
     Endpoints,
-    Infrastructure,
-    GitChanges,
-    Impact,
-    Context,
-    Graph,
-    Diagnostics,
+}
+
+/// <summary>What the endpoint details panel is showing.</summary>
+public enum DetailsTab
+{
+    ExecutionTrace,
+    Overview,
 }
 
 /// <summary>

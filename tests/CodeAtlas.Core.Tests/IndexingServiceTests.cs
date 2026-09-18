@@ -7,8 +7,8 @@ using Microsoft.Data.Sqlite;
 namespace CodeAtlas.Core.Tests;
 
 /// <summary>
-/// Exercises the whole MVP path against a real solution on disk: load with MSBuild,
-/// index, persist, reopen, search, inspect and navigate.
+/// Exercises the whole path against a real solution on disk: load with MSBuild, index,
+/// persist, reopen, and walk what one member reaches.
 /// </summary>
 /// <remarks>
 /// Runs in its own collection because MSBuildLocator registers process-wide state.
@@ -22,6 +22,15 @@ public class IndexingServiceTests : IClassFixture<SampleRepository>, IDisposable
     public IndexingServiceTests(SampleRepository repository) => _repository = repository;
 
     private string CachePath => Path.Combine(_cacheRoot, "index.db");
+
+    /// <summary>The one type of that name, wherever in the solution it was declared.</summary>
+    private static IndexedSymbol Type(SymbolIndexDatabase database, string @namespace, string name) =>
+        database.GetProjects()
+            .SelectMany(project => database.GetTypes(project.Id, @namespace))
+            .Single(symbol => symbol.Name == name);
+
+    private static IndexedSymbol Member(SymbolIndexDatabase database, string container, string name) =>
+        database.GetMembers(container).Single(symbol => symbol.Name == name);
 
     private async Task<IndexingResult> IndexAsync(string workspacePath)
     {
@@ -66,8 +75,8 @@ public class IndexingServiceTests : IClassFixture<SampleRepository>, IDisposable
         using var database = SymbolIndexDatabase.Open(CachePath);
 
         // ...and the healthy projects are still fully indexed.
-        Assert.NotEmpty(database.Search("Calculator"));
-        Assert.NotEmpty(database.Search("Runner"));
+        Assert.Equal("Core", Type(database, "Sample.Core", "Calculator").ProjectName);
+        Assert.Equal("App", Type(database, "Sample.App", "Runner").ProjectName);
         Assert.Contains(database.GetDiagnostics(), d =>
             d.Message.Contains("Broken.csproj", StringComparison.OrdinalIgnoreCase));
     }
@@ -78,7 +87,7 @@ public class IndexingServiceTests : IClassFixture<SampleRepository>, IDisposable
         await IndexAsync(_repository.SolutionPath);
 
         using var database = SymbolIndexDatabase.Open(CachePath);
-        var calculator = Assert.Single(database.Search("Calculator"), s => s.Kind == IndexedSymbolKind.Class);
+        var calculator = Type(database, "Sample.Core", "Calculator");
 
         Assert.Equal("Sample.Core.Calculator", calculator.FullyQualifiedName);
         Assert.Equal("Sample.Core", calculator.Namespace);
@@ -93,21 +102,23 @@ public class IndexingServiceTests : IClassFixture<SampleRepository>, IDisposable
     }
 
     [Fact]
-    public async Task Links_relations_across_project_boundaries()
+    public async Task Walks_a_trace_step_across_a_project_boundary()
     {
         await IndexAsync(_repository.SolutionPath);
 
         using var database = SymbolIndexDatabase.Open(CachePath);
-        var @interface = Assert.Single(database.Search("ICalculator"));
-        var details = database.GetDetails(@interface.Id);
 
-        Assert.NotNull(details);
+        // Runner is in App and the interface it calls is in Core, so the call edge had
+        // to be resolved after both projects were written.
+        var add = Member(database, "Sample.Core.ICalculator", "Add");
+        Assert.Contains(
+            database.GetCallees(Member(database, "Sample.App.Runner", "Run").Id),
+            symbol => symbol.Id == add.Id);
 
-        // Implemented in the same project...
-        Assert.Contains(details.Implementors, l => l.FullyQualifiedName == "Sample.Core.Calculator");
-
-        // ...and referenced from another one, resolved to a navigable symbol.
-        Assert.Contains(details.ReferencedBy, l => l.IsNavigable && l.FullyQualifiedName.StartsWith("Sample.App.Runner", StringComparison.Ordinal));
+        // And the step past the interface lands on the implementation.
+        Assert.Equal(
+            ["Sample.Core.Calculator.Add(System.Int32, System.Int32)"],
+            database.GetImplementations(add.Id).Select(symbol => symbol.FullyQualifiedName));
     }
 
     [Fact]
@@ -122,7 +133,7 @@ public class IndexingServiceTests : IClassFixture<SampleRepository>, IDisposable
 
         Assert.True(reopened.HasUsableIndexFor(_repository.SolutionPath));
         Assert.Equal(first.Metadata.SymbolCount, reopened.ReadMetadata()?.SymbolCount);
-        Assert.NotEmpty(reopened.Search("Calculator"));
+        Assert.Equal("Core", Type(reopened, "Sample.Core", "Calculator").ProjectName);
     }
 
     [Fact]
@@ -134,7 +145,7 @@ public class IndexingServiceTests : IClassFixture<SampleRepository>, IDisposable
 
         // Opening App pulls in the project it references.
         Assert.Contains(database.GetProjects(), p => p.Name == "App");
-        Assert.NotEmpty(database.Search("Runner"));
+        Assert.Equal("App", Type(database, "Sample.App", "Runner").ProjectName);
         Assert.True(result.Metadata.SymbolCount > 0);
     }
 
@@ -155,15 +166,6 @@ public class IndexingServiceTests : IClassFixture<SampleRepository>, IDisposable
         {
             Assert.NotEmpty(messages);
         }
-    }
-
-    [Fact]
-    public void Detects_that_the_workspace_is_not_under_git()
-    {
-        var target = WorkspaceLocator.Resolve(_repository.SolutionPath);
-
-        Assert.NotNull(target);
-        Assert.False(target.IsGitRepository);
     }
 
     public void Dispose()

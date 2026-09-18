@@ -20,12 +20,19 @@
   <SolidColorBrush x:Key="TextSecondaryBrush" Color="#71717A" />
   <SolidColorBrush x:Key="TextTertiaryBrush" Color="#A1A1AA" />
 
-  <!-- Emphasis: the single dark tone used for selection and primary actions. -->
+  <!-- Accent: the blue that marks what is selected — the section, the project, the
+       endpoint. Selection is a light wash with a blue foreground rather than a filled
+       dark block, so three levels of selection can be on screen at once without any of
+       them shouting over the content they are selecting. -->
+  <SolidColorBrush x:Key="AccentBrush" Color="#2563EB" />
+  <SolidColorBrush x:Key="AccentSoftBrush" Color="#EFF4FF" />
+  <SolidColorBrush x:Key="AccentBorderBrush" Color="#BFD3FE" />
+
+  <!-- Emphasis: the single dark tone used for primary actions. -->
   <SolidColorBrush x:Key="EmphasisBrush" Color="#18181B" />
   <SolidColorBrush x:Key="EmphasisHoverBrush" Color="#27272A" />
   <SolidColorBrush x:Key="EmphasisPressedBrush" Color="#3F3F46" />
   <SolidColorBrush x:Key="OnEmphasisBrush" Color="#FFFFFF" />
-  <SolidColorBrush x:Key="OnEmphasisMutedBrush" Color="#A1A1AA" />
 
   <!-- Semantic accents, used only for state. -->
   <SolidColorBrush x:Key="SuccessBrush" Color="#15803D" />
@@ -37,8 +44,19 @@
   <SolidColorBrush x:Key="InfoBrush" Color="#1D4ED8" />
   <SolidColorBrush x:Key="InfoSoftBrush" Color="#EFF4FF" />
 
-  <!-- Focus: a restrained charcoal ring rather than a bright system blue. -->
-  <SolidColorBrush x:Key="FocusRingBrush" Color="#18181B" />
+  <!-- Focus -->
+  <SolidColorBrush x:Key="FocusRingBrush" Color="#2563EB" />
+
+  <!-- HTTP verbs. Read-only, creating, replacing and removing are four different
+       consequences, and the list is scanned for exactly that difference. -->
+  <SolidColorBrush x:Key="VerbGetBrush" Color="#1D4ED8" />
+  <SolidColorBrush x:Key="VerbGetSoftBrush" Color="#EFF4FF" />
+  <SolidColorBrush x:Key="VerbPostBrush" Color="#15803D" />
+  <SolidColorBrush x:Key="VerbPostSoftBrush" Color="#ECFDF3" />
+  <SolidColorBrush x:Key="VerbPutBrush" Color="#B45309" />
+  <SolidColorBrush x:Key="VerbPutSoftBrush" Color="#FEF6E7" />
+  <SolidColorBrush x:Key="VerbDeleteBrush" Color="#B91C1C" />
+  <SolidColorBrush x:Key="VerbDeleteSoftBrush" Color="#FEF1F1" />
 
   <!-- Corner radii -->
   <CornerRadius x:Key="RadiusCard">14</CornerRadius>
@@ -51,17 +69,13 @@
        because BoxShadows has no resource form to name here. -->
 
   <!-- Icons: one stroked line set at a 24x24 origin, scaled by the `icon` style. -->
-  <StreamGeometry x:Key="Icon.Overview">M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z</StreamGeometry>
   <StreamGeometry x:Key="Icon.Explorer">M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z</StreamGeometry>
-  <StreamGeometry x:Key="Icon.Search">M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14z M16.2 16.2 20 20</StreamGeometry>
-  <StreamGeometry x:Key="Icon.Diagnostics">M12 4 21 20H3z M12 10v4 M12 17h0.01</StreamGeometry>
   <StreamGeometry x:Key="Icon.Endpoints">M4 8h16 M4 16h16 M9 4 7 20 M17 4l-2 16</StreamGeometry>
-  <StreamGeometry x:Key="Icon.Infrastructure">M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7 M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3</StreamGeometry>
-  <StreamGeometry x:Key="Icon.Graph">M6 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M18 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M7.6 8.6 11 14 M16.4 8.6 13 14</StreamGeometry>
-  <StreamGeometry x:Key="Icon.GitChanges">M7 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M7 22a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M18 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M7 6v12 M18 10v1a4 4 0 0 1-4 4H7</StreamGeometry>
-  <StreamGeometry x:Key="Icon.Impact">M12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 6a6 6 0 0 1 6 6 M12 3a9 9 0 0 1 9 9 M12 18a6 6 0 0 1-6-6 M12 21a9 9 0 0 1-9-9</StreamGeometry>
-  <StreamGeometry x:Key="Icon.Context">M12 3 3 7.5v9L12 21l9-4.5v-9z M3 7.5 12 12l9-4.5 M12 12v9</StreamGeometry>
   <StreamGeometry x:Key="Icon.Refresh">M20 12a8 8 0 1 1-2.3-5.6 M20 3v4h-4</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Indexing">M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7 M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Project">M12 3 3 7.5v9L12 21l9-4.5v-9z M3 7.5 12 12l9-4.5 M12 12v9</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Chevron">M7 10l5 5 5-5</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Code">M9 7 4 12l5 5 M15 7l5 5-5 5</StreamGeometry>
 
   <!-- Typography -->
   <!-- The UI face is Inter, embedded by Program.WithInterFont() and applied as the
@@ -75,13 +89,9 @@
   <x:Double x:Key="FontSizeCaption">11</x:Double>
 
   <!-- Fixed shell dimensions, shared so every future screen lines up with the shell. -->
-  <x:Double x:Key="TopBarHeight">56</x:Double>
-  <x:Double x:Key="SidebarWidth">232</x:Double>
-  <x:Double x:Key="DetailsPanelWidth">340</x:Double>
+  <x:Double x:Key="TopBarHeight">60</x:Double>
+  <x:Double x:Key="SidebarWidth">320</x:Double>
+  <x:Double x:Key="DetailsWidth">380</x:Double>
   <x:Double x:Key="StatusBarHeight">30</x:Double>
-
-  <!-- Spacing scale: 4 / 8 / 12 / 16 / 24 / 32. -->
-  <Thickness x:Key="CardPadding">20</Thickness>
-  <Thickness x:Key="ContentPadding">24</Thickness>
 
 </ResourceDictionary>

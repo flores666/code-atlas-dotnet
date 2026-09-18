@@ -1,6 +1,5 @@
 using System.Globalization;
 using CodeAtlas.Core.Model;
-using CodeAtlas.Core.Testing;
 using Microsoft.Data.Sqlite;
 
 namespace CodeAtlas.Core.Storage;
@@ -15,9 +14,6 @@ namespace CodeAtlas.Core.Storage;
 /// </remarks>
 public sealed class SymbolIndexDatabase : IDisposable
 {
-    /// <summary>Cap on rows returned for the incoming-reference list of one symbol.</summary>
-    public const int MaxIncomingReferences = 200;
-
     private readonly SqliteConnection _connection;
 
     /// <summary>Guards <see cref="_connection"/>, which SQLite does not allow to be used concurrently.</summary>
@@ -206,7 +202,7 @@ public sealed class SymbolIndexDatabase : IDisposable
     /// </summary>
     public IndexWriteSession BeginRebuild() => new(_connection);
 
-    // ---- reading ------------------------------------------------------------
+    // ---- the explorer tree --------------------------------------------------
 
     public IReadOnlyList<IndexedProject> GetProjects()
     {
@@ -214,9 +210,10 @@ public sealed class SymbolIndexDatabase : IDisposable
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                SELECT id, name, file_path, assembly_name, loaded
-                FROM projects
-                ORDER BY name COLLATE NOCASE
+                SELECT p.id, p.name, p.file_path, p.assembly_name, p.loaded,
+                       (SELECT COUNT(*) FROM symbols s WHERE s.project_id = p.id)
+                FROM projects p
+                ORDER BY p.name COLLATE NOCASE
                 """;
 
             using var reader = command.ExecuteReader();
@@ -231,6 +228,7 @@ public sealed class SymbolIndexDatabase : IDisposable
                     FilePath = reader.IsDBNull(2) ? null : reader.GetString(2),
                     AssemblyName = reader.IsDBNull(3) ? null : reader.GetString(3),
                     Loaded = reader.GetInt32(4) != 0,
+                    SymbolCount = reader.GetInt32(5),
                 });
             }
 
@@ -302,52 +300,6 @@ public sealed class SymbolIndexDatabase : IDisposable
         }
     }
 
-    /// <summary>
-    /// Searches declarations by name. Exact matches rank first, then prefix matches,
-    /// then substring matches; shorter names win ties.
-    /// </summary>
-    public IReadOnlyList<IndexedSymbol> Search(string query, int limit = 200)
-    {
-        lock (_gate)
-        {
-            if (string.IsNullOrWhiteSpace(query))
-            {
-                return [];
-            }
-
-            var trimmed = query.Trim();
-            var escaped = Escape(trimmed);
-
-            using var command = _connection.CreateCommand();
-            command.CommandText = $"""
-                {SelectSymbol}
-                WHERE s.name LIKE @contains ESCAPE '\'
-                ORDER BY
-                    CASE
-                        WHEN s.name = @exact COLLATE NOCASE THEN 0
-                        WHEN s.name LIKE @prefix ESCAPE '\' THEN 1
-                        ELSE 2
-                    END,
-                    LENGTH(s.name),
-                    s.name COLLATE NOCASE,
-                    s.fqn
-                LIMIT @limit
-                """;
-            command.Parameters.AddWithValue("@contains", $"%{escaped}%");
-            command.Parameters.AddWithValue("@prefix", $"{escaped}%");
-            command.Parameters.AddWithValue("@exact", trimmed);
-            command.Parameters.AddWithValue("@limit", limit);
-
-            return ReadSymbols(command);
-        }
-    }
-
-    /// <summary>Escapes the LIKE wildcards so a query such as <c>_Foo</c> is literal.</summary>
-    private static string Escape(string value) => value
-        .Replace("\\", "\\\\", StringComparison.Ordinal)
-        .Replace("%", "\\%", StringComparison.Ordinal)
-        .Replace("_", "\\_", StringComparison.Ordinal);
-
     public IndexedSymbol? GetSymbol(long id)
     {
         lock (_gate)
@@ -360,452 +312,46 @@ public sealed class SymbolIndexDatabase : IDisposable
         }
     }
 
-    /// <summary>The symbol a fully qualified name identifies, or <c>null</c> when it is outside the index.</summary>
-    private IndexedSymbol? GetSymbolByName(string fullyQualifiedName)
-    {
-        using var command = _connection.CreateCommand();
-        command.CommandText = $"{SelectSymbol} WHERE s.fqn = @fqn LIMIT 1";
-        command.Parameters.AddWithValue("@fqn", fullyQualifiedName);
-
-        return ReadSymbols(command).FirstOrDefault();
-    }
-
-    public SymbolDetails? GetDetails(long id)
-    {
-        lock (_gate)
-        {
-            if (GetSymbol(id) is not { } symbol)
-            {
-                return null;
-            }
-
-            return new SymbolDetails
-            {
-                Symbol = symbol with { Attributes = GetAttributes(id) },
-                BaseTypes = GetOutgoing(id, [RelationKind.Inherits]),
-                Interfaces = GetOutgoing(id, [RelationKind.Implements]),
-                Overrides = GetOutgoing(id, [RelationKind.Overrides]),
-                Calls = GetOutgoing(id, [RelationKind.Calls]),
-                References = GetOutgoing(id, [RelationKind.References]),
-                ParameterTypes = GetOutgoing(id, [RelationKind.ParameterType]),
-                ReturnTypes = GetOutgoing(id, [RelationKind.ReturnType]),
-                Injects = GetOutgoing(id, [RelationKind.Injects]),
-                Resolves = GetOutgoing(id, [RelationKind.Resolves]),
-                InjectedBy = GetIncoming(id, [RelationKind.Injects], int.MaxValue),
-                ResolvedBy = GetIncoming(id, [RelationKind.Resolves], int.MaxValue),
-                DerivedTypes = GetIncoming(id, [RelationKind.Inherits], int.MaxValue),
-                Implementors = GetIncoming(id, [RelationKind.Implements], int.MaxValue),
-                OverriddenBy = GetIncoming(id, [RelationKind.Overrides], int.MaxValue),
-                CalledBy = GetIncoming(id, [RelationKind.Calls], MaxIncomingReferences),
-                CalledByTotal = CountIncoming(id, [RelationKind.Calls]),
-                ReferencedBy = GetIncoming(id, [RelationKind.References], MaxIncomingReferences),
-                ReferencedByTotal = CountIncoming(id, [RelationKind.References]),
-
-                DeclaredEntities = GetOutgoing(id, [RelationKind.DeclaresEntity]),
-                ConfiguredEntities = GetOutgoing(id, [RelationKind.ConfiguresEntity]),
-                DeclaredBy = GetIncoming(id, [RelationKind.DeclaresEntity, RelationKind.ConfiguresEntity], int.MaxValue),
-                RelatedEntities = GetOutgoing(id, [RelationKind.RelatesToEntity]),
-                ReadsEntities = GetOutgoing(id, [RelationKind.ReadsEntity]),
-                WritesEntities = GetOutgoing(
-                    id, [RelationKind.CreatesEntity, RelationKind.ModifiesEntity, RelationKind.DeletesEntity]),
-                Readers = GetIncoming(id, [RelationKind.ReadsEntity], MaxIncomingReferences),
-                Writers = GetIncoming(
-                    id,
-                    [RelationKind.CreatesEntity, RelationKind.ModifiesEntity, RelationKind.DeletesEntity],
-                    MaxIncomingReferences),
-
-                ReadsConfiguration = GetOutgoing(id, [RelationKind.ReadsConfiguration]),
-                ConfigurationReaders = GetIncoming(id, [RelationKind.ReadsConfiguration], int.MaxValue),
-                UsesExternal = GetOutgoing(id, [RelationKind.UsesExternal]),
-                ExternalConsumers = GetIncoming(id, [RelationKind.UsesExternal], int.MaxValue),
-
-                Registrations =
-                [
-                    .. ReadRegistrations($"{SelectRegistration} WHERE service_symbol_id = @id ORDER BY id", id),
-                    .. ReadRegistrations($"{SelectRegistration} WHERE impl_symbol_id = @id ORDER BY id", id),
-                ],
-                EntityMappings = ReadEntities(
-                    $"{SelectEntity} WHERE e.entity_symbol_id = @id OR e.context_symbol_id = @id " +
-                    "OR e.config_symbol_id = @id ORDER BY e.entity_display COLLATE NOCASE, e.id", id),
-                Migrations = ReadMigrations(
-                    $"{SelectMigration} WHERE m.context_symbol_id = @id OR m.type_symbol_id = @id " +
-                    "ORDER BY m.name, m.id", id),
-                Configuration = ReadConfiguration(
-                    $"{SelectConfiguration} WHERE c.options_symbol_id = @id OR c.consumer_symbol_id = @id " +
-                    "ORDER BY c.config_key COLLATE NOCASE, c.id", id),
-                ExternalDependencies = ReadExternal(
-                    $"{SelectExternal} WHERE x.consumer_symbol_id = @id OR x.client_symbol_id = @id " +
-                    "ORDER BY x.technology, x.id", id),
-
-                RelatedEndpoints = FindUpstreamEndpoints(id),
-                RelatedServices = FindUpstreamServices(id),
-                RelatedTests = FindRelatedTests(id),
-            };
-        }
-    }
-
-    private IReadOnlyList<string> GetAttributes(long symbolId)
-    {
-        using var command = _connection.CreateCommand();
-        command.CommandText = """
-            SELECT attribute_fqn FROM symbol_attributes
-            WHERE symbol_id = @id
-            ORDER BY attribute_fqn
-            """;
-        command.Parameters.AddWithValue("@id", symbolId);
-
-        using var reader = command.ExecuteReader();
-        var results = new List<string>();
-
-        while (reader.Read())
-        {
-            results.Add(reader.GetString(0));
-        }
-
-        return results;
-    }
-
-    private IReadOnlyList<SymbolLink> GetOutgoing(long symbolId, IReadOnlyCollection<RelationKind> kinds)
-    {
-        using var command = _connection.CreateCommand();
-        var kindList = KindList(command, kinds);
-        command.CommandText = $"""
-            SELECT DISTINCT target_symbol_id, target_fqn, target_display, provenance
-            FROM relations
-            WHERE source_symbol_id = @id AND kind IN {kindList}
-            ORDER BY target_display COLLATE NOCASE, target_fqn
-            """;
-        command.Parameters.AddWithValue("@id", symbolId);
-
-        return ReadLinks(command);
-    }
-
-    private IReadOnlyList<SymbolLink> GetIncoming(long symbolId, IReadOnlyCollection<RelationKind> kinds, int limit)
-    {
-        using var command = _connection.CreateCommand();
-        var kindList = KindList(command, kinds);
-        command.CommandText = $"""
-            SELECT DISTINCT s.id, s.fqn, s.display, r.provenance
-            FROM relations r
-            JOIN symbols s ON s.id = r.source_symbol_id
-            WHERE r.target_symbol_id = @id AND r.kind IN {kindList}
-            ORDER BY s.display COLLATE NOCASE, s.fqn
-            LIMIT @limit
-            """;
-        command.Parameters.AddWithValue("@id", symbolId);
-        command.Parameters.AddWithValue("@limit", limit);
-
-        return ReadLinks(command);
-    }
-
-    private int CountIncoming(long symbolId, IReadOnlyCollection<RelationKind> kinds)
-    {
-        using var command = _connection.CreateCommand();
-        var kindList = KindList(command, kinds);
-        command.CommandText = $"""
-            SELECT COUNT(DISTINCT source_symbol_id) FROM relations
-            WHERE target_symbol_id = @id AND kind IN {kindList}
-            """;
-        command.Parameters.AddWithValue("@id", symbolId);
-
-        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
-    }
-
-
-    // ---- navigation ---------------------------------------------------------
-
-    /// <summary>Members that invoke this symbol.</summary>
-    public IReadOnlyList<SymbolLink> FindCallers(long symbolId, int limit = MaxIncomingReferences)
-    {
-        lock (_gate)
-        {
-            return GetIncoming(symbolId, [RelationKind.Calls], limit);
-        }
-    }
-
-    /// <summary>Methods and constructors this symbol invokes.</summary>
-    public IReadOnlyList<SymbolLink> FindCallees(long symbolId)
-    {
-        lock (_gate)
-        {
-            return GetOutgoing(symbolId, [RelationKind.Calls]);
-        }
-    }
-
-    /// <summary>
-    /// Everything that mentions this symbol. Call sites count: they are references that
-    /// happen to be invocations, and are stored as calls only so the two can be told apart.
-    /// </summary>
-    public IReadOnlyList<SymbolLink> FindReferences(long symbolId, int limit = MaxIncomingReferences)
-    {
-        lock (_gate)
-        {
-            return GetIncoming(symbolId, [RelationKind.References, RelationKind.Calls], limit);
-        }
-    }
-
-    /// <summary>
-    /// Types implementing this interface, members implementing this interface member, and
-    /// members overriding this one — the same set an editor's "go to implementation" shows.
-    /// </summary>
-    public IReadOnlyList<SymbolLink> FindImplementations(long symbolId, int limit = int.MaxValue)
-    {
-        lock (_gate)
-        {
-            return GetIncoming(symbolId, [RelationKind.Implements, RelationKind.Overrides], limit);
-        }
-    }
-
-    /// <summary>Types that derive from this type.</summary>
-    public IReadOnlyList<SymbolLink> FindDerivedTypes(long symbolId, int limit = int.MaxValue)
-    {
-        lock (_gate)
-        {
-            return GetIncoming(symbolId, [RelationKind.Inherits], limit);
-        }
-    }
-
-    // ---- graph primitives ---------------------------------------------------
+    // ---- one step of an execution trace -------------------------------------
     //
-    // These exist for NeighborhoodBuilder, which owns how far a walk goes. They answer
-    // exactly one hop each, so no query here can grow with the size of the solution.
+    // Both answer exactly one hop, so neither can grow with the size of the solution.
+    // How far a trace walks is EndpointTraceBuilder's business, not theirs.
+
+    /// <summary>The methods and constructors a member invokes.</summary>
+    public IReadOnlyList<IndexedSymbol> GetCallees(long symbolId) =>
+        Step(symbolId, "r.target_symbol_id", "r.source_symbol_id", RelationKind.Calls);
 
     /// <summary>
-    /// Every symbol declared in one file, in declaration order.
+    /// What runs in place of this member: the members implementing it when it is declared
+    /// on an interface, and the members overriding it when it is virtual or abstract.
     /// </summary>
-    /// <remarks>
-    /// The unit a diff is mapped in: a hunk names a file and some of its lines, and this is
-    /// the set of declarations those lines can fall inside. Namespaces are excluded because
-    /// a namespace's span covers the whole file, so every change would land on it and say
-    /// nothing.
-    /// </remarks>
-    public IReadOnlyList<IndexedSymbol> GetSymbolsInFile(string filePath)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+    public IReadOnlyList<IndexedSymbol> GetImplementations(long symbolId) =>
+        Step(symbolId, "r.source_symbol_id", "r.target_symbol_id", RelationKind.Implements, RelationKind.Overrides);
 
+    /// <summary>
+    /// Walks one hop: the symbols reached from <paramref name="symbolId"/> along
+    /// <paramref name="kinds"/>, read off whichever end of the edge is the far one.
+    /// </summary>
+    private IReadOnlyList<IndexedSymbol> Step(
+        long symbolId,
+        string farEnd,
+        string nearEnd,
+        params RelationKind[] kinds)
+    {
         lock (_gate)
         {
             using var command = _connection.CreateCommand();
+            var kindList = KindList(command, kinds);
             command.CommandText = $"""
                 {SelectSymbol}
-                WHERE s.file_path = @path COLLATE NOCASE AND s.kind <> 'Namespace'
-                ORDER BY s.line, s.id
+                JOIN relations r ON {farEnd} = s.id
+                WHERE {nearEnd} = @id AND r.kind IN {kindList}
+                GROUP BY s.id
+                ORDER BY s.display COLLATE NOCASE, s.fqn
                 """;
-            command.Parameters.AddWithValue("@path", filePath);
+            command.Parameters.AddWithValue("@id", symbolId);
 
             return ReadSymbols(command);
-        }
-    }
-
-    public IReadOnlyList<IndexedSymbol> GetSymbols(IReadOnlyCollection<long> ids)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-
-        lock (_gate)
-        {
-            if (ids.Count == 0)
-            {
-                return [];
-            }
-
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-            command.CommandText = $"{SelectSymbol} WHERE s.id IN {idList}";
-
-            return ReadSymbols(command);
-        }
-    }
-
-    /// <summary>
-    /// Edges touching any of <paramref name="ids"/>, in either direction, keeping at most
-    /// <paramref name="maxPerSymbol"/> per anchor so one hub symbol cannot fill the graph
-    /// on its own. Edges whose far end is outside the index are skipped: they have nothing
-    /// to draw.
-    /// </summary>
-    public IReadOnlyList<RelationEdge> GetIncidentEdges(
-        IReadOnlyCollection<long> ids,
-        IReadOnlyCollection<RelationKind> kinds,
-        int maxPerSymbol)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-        ArgumentNullException.ThrowIfNull(kinds);
-
-        lock (_gate)
-        {
-            if (ids.Count == 0 || kinds.Count == 0)
-            {
-                return [];
-            }
-
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-            var kindList = KindList(command, kinds);
-
-            command.CommandText = $"""
-                WITH incident AS (
-                    SELECT source_symbol_id AS anchor, source_symbol_id AS src,
-                           target_symbol_id AS dst, kind, provenance
-                    FROM relations
-                    WHERE source_symbol_id IN {idList} AND kind IN {kindList}
-                      AND target_symbol_id IS NOT NULL
-                    UNION ALL
-                    SELECT target_symbol_id AS anchor, source_symbol_id AS src,
-                           target_symbol_id AS dst, kind, provenance
-                    FROM relations
-                    WHERE target_symbol_id IN {idList} AND kind IN {kindList}
-                ),
-                ranked AS (
-                    SELECT src, dst, kind, provenance,
-                           ROW_NUMBER() OVER (PARTITION BY anchor ORDER BY kind, dst, src) AS rank
-                    FROM incident
-                )
-                SELECT src, dst, kind, provenance FROM ranked WHERE rank <= @max
-                """;
-            command.Parameters.AddWithValue("@max", maxPerSymbol);
-
-            return ReadEdges(command);
-        }
-    }
-
-    /// <summary>Edges with both ends inside <paramref name="ids"/>, which is what the graph draws.</summary>
-    public IReadOnlyList<RelationEdge> GetInternalEdges(
-        IReadOnlyCollection<long> ids,
-        IReadOnlyCollection<RelationKind> kinds)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-        ArgumentNullException.ThrowIfNull(kinds);
-
-        lock (_gate)
-        {
-            if (ids.Count == 0 || kinds.Count == 0)
-            {
-                return [];
-            }
-
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-            var kindList = KindList(command, kinds);
-
-            command.CommandText = $"""
-                SELECT source_symbol_id, target_symbol_id, kind, provenance
-                FROM relations
-                WHERE source_symbol_id IN {idList}
-                  AND target_symbol_id IN {idList}
-                  AND kind IN {kindList}
-                """;
-
-            return ReadEdges(command);
-        }
-    }
-
-    /// <summary>
-    /// How many distinct neighbours each symbol has under <paramref name="kinds"/>. The
-    /// graph subtracts what it already shows to decide which nodes are worth expanding.
-    /// </summary>
-    public IReadOnlyDictionary<long, int> CountNeighbours(
-        IReadOnlyCollection<long> ids,
-        IReadOnlyCollection<RelationKind> kinds)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-        ArgumentNullException.ThrowIfNull(kinds);
-
-        lock (_gate)
-        {
-            var counts = new Dictionary<long, int>();
-            if (ids.Count == 0 || kinds.Count == 0)
-            {
-                return counts;
-            }
-
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-            var kindList = KindList(command, kinds);
-
-            // UNION, not UNION ALL: a pair linked in both directions is one neighbour.
-            command.CommandText = $"""
-                SELECT anchor, COUNT(*) FROM (
-                    SELECT source_symbol_id AS anchor, target_symbol_id AS other
-                    FROM relations
-                    WHERE source_symbol_id IN {idList} AND kind IN {kindList}
-                      AND target_symbol_id IS NOT NULL
-                    UNION
-                    SELECT target_symbol_id AS anchor, source_symbol_id AS other
-                    FROM relations
-                    WHERE target_symbol_id IN {idList} AND kind IN {kindList}
-                )
-                GROUP BY anchor
-                """;
-
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                counts[reader.GetInt64(0)] = reader.GetInt32(1);
-            }
-
-            return counts;
-        }
-    }
-
-    // ---- composition --------------------------------------------------------
-
-    /// <summary>
-    /// Every DI registration in the workspace, ordered so one service's registrations sit
-    /// together.
-    /// </summary>
-    public IReadOnlyList<ServiceRegistration> GetRegistrations()
-    {
-        lock (_gate)
-        {
-            using var command = _connection.CreateCommand();
-            command.CommandText = $"{SelectRegistration} ORDER BY service_display COLLATE NOCASE, service_fqn, id";
-
-            return ReadRegistrations(command);
-        }
-    }
-
-    /// <summary>
-    /// What is registered for one service type. Several rows are normal: a service may be
-    /// registered more than once, and the container keeps them all.
-    /// </summary>
-    public IReadOnlyList<ServiceRegistration> GetRegistrationsForService(long serviceSymbolId)
-    {
-        lock (_gate)
-        {
-            using var command = _connection.CreateCommand();
-            command.CommandText = $"{SelectRegistration} WHERE service_symbol_id = @id ORDER BY id";
-            command.Parameters.AddWithValue("@id", serviceSymbolId);
-
-            return ReadRegistrations(command);
-        }
-    }
-
-    /// <summary>Every EF Core entity the index found, ordered by name.</summary>
-    public IReadOnlyList<EntityMapping> GetEntities() =>
-        Read(() => ReadEntities($"{SelectEntity} ORDER BY e.entity_display COLLATE NOCASE, e.id"));
-
-    public IReadOnlyList<DataMigration> GetMigrations() =>
-        Read(() => ReadMigrations($"{SelectMigration} ORDER BY m.name, m.id"));
-
-    /// <summary>Every configuration read, ordered so one key's readers sit together.</summary>
-    public IReadOnlyList<ConfigurationUsage> GetConfigurationUsages() =>
-        Read(() => ReadConfiguration(
-            $"{SelectConfiguration} ORDER BY c.config_key COLLATE NOCASE, c.options_display COLLATE NOCASE, c.id"));
-
-    /// <summary>Every infrastructure boundary, grouped by the technology behind it.</summary>
-    public IReadOnlyList<ExternalDependency> GetExternalDependencies() =>
-        Read(() => ReadExternal(
-            $"{SelectExternal} ORDER BY x.technology, x.consumer_display COLLATE NOCASE, x.id"));
-
-    /// <summary>The registrations that name a type as an implementation of something.</summary>
-    public IReadOnlyList<ServiceRegistration> GetRegistrationsForImplementation(long implementationSymbolId)
-    {
-        lock (_gate)
-        {
-            using var command = _connection.CreateCommand();
-            command.CommandText = $"{SelectRegistration} WHERE impl_symbol_id = @id ORDER BY id";
-            command.Parameters.AddWithValue("@id", implementationSymbolId);
-
-            return ReadRegistrations(command);
         }
     }
 
@@ -822,846 +368,14 @@ public sealed class SymbolIndexDatabase : IDisposable
         }
     }
 
-    /// <summary>
-    /// What an endpoint's handler reaches directly: for a controller action, the services
-    /// its declaring type is constructed with; for a Minimal API lambda, the services it
-    /// is handed and the methods it calls, which is where its flow has to start because it
-    /// has no declaration of its own.
-    /// </summary>
-    public IReadOnlyList<SymbolLink> GetEndpointDependencies(long endpointId)
-    {
-        lock (_gate)
-        {
-            using var command = _connection.CreateCommand();
-
-            // Kept in collection order rather than sorted: the first is the one an inline
-            // endpoint's graph is rooted at, and the collector emits it first for that reason.
-            command.CommandText = """
-                SELECT d.symbol_id, d.target_fqn, d.target_display, 'Exact'
-                FROM endpoint_dependencies d
-                WHERE d.endpoint_id = @id
-                ORDER BY d.id
-                """;
-            command.Parameters.AddWithValue("@id", endpointId);
-
-            if (ReadLinks(command) is { Count: > 0 } inline)
-            {
-                return inline;
-            }
-
-            using var injected = _connection.CreateCommand();
-            injected.CommandText = """
-                SELECT DISTINCT r.target_symbol_id, r.target_fqn, r.target_display, r.provenance
-                FROM endpoints e
-                JOIN relations r ON r.source_symbol_id = e.declaring_id AND r.kind = 'Injects'
-                WHERE e.id = @id
-                ORDER BY r.target_display COLLATE NOCASE, r.target_fqn
-                """;
-            injected.Parameters.AddWithValue("@id", endpointId);
-
-            return ReadLinks(injected);
-        }
-    }
-
-    // ---- flow ---------------------------------------------------------------
-
-    /// <summary>
-    /// The components a symbol can be reached from, walked backwards along composition.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The seed is what names the symbol, widened to the type that names it: a flow is
-    /// read between components, and an entity is read by a repository <em>method</em>
-    /// whose consumers are wired to its type.
-    /// </para>
-    /// <para>
-    /// From there only <c>Injects</c> and <c>Resolves</c> are followed. That chain is what
-    /// an endpoint's flow is actually made of, and it is short and narrow; following calls
-    /// backwards would not be, and one hot method would put the whole solution in the
-    /// answer.
-    /// </para>
-    /// </remarks>
-    private const string UpstreamReach = """
-        WITH RECURSIVE
-        seed(id) AS (
-            SELECT @id
-            UNION
-            SELECT COALESCE(owner.id, member.id)
-            FROM relations r
-            JOIN symbols member ON member.id = r.source_symbol_id
-            LEFT JOIN symbols owner ON owner.fqn = member.container_fqn
-            WHERE r.target_symbol_id = @id
-              AND r.kind IN ('ReadsEntity', 'CreatesEntity', 'ModifiesEntity', 'DeletesEntity',
-                             'DeclaresEntity', 'ConfiguresEntity', 'ReadsConfiguration',
-                             'UsesExternal', 'Injects', 'Resolves', 'Calls')
-        ),
-        reach(id, depth) AS (
-            SELECT id, 0 FROM seed
-            UNION
-            SELECT r.source_symbol_id, reach.depth + 1
-            FROM reach
-            JOIN relations r ON r.target_symbol_id = reach.id
-            WHERE reach.depth < @depth AND r.kind IN ('Injects', 'Resolves')
-        )
-        """;
-
-    /// <summary>How far the composition chain from an endpoint down to a resource is followed.</summary>
-    private const int MaxFlowDepth = 6;
-
-    /// <summary>HTTP endpoints whose flow reaches this symbol.</summary>
-    private List<HttpEndpoint> FindUpstreamEndpoints(long symbolId, int limit = 50)
-    {
-        using var command = _connection.CreateCommand();
-        command.CommandText = $"""
-            {UpstreamReach}
-            {SelectEndpoint}
-            WHERE e.declaring_id IN (SELECT id FROM reach)
-               OR e.handler_symbol_id IN (SELECT id FROM reach)
-               OR e.id IN (SELECT d.endpoint_id FROM endpoint_dependencies d
-                           WHERE d.symbol_id IN (SELECT id FROM reach))
-            ORDER BY e.route COLLATE NOCASE, e.http_method, e.id
-            LIMIT @limit
-            """;
-        command.Parameters.AddWithValue("@id", symbolId);
-        command.Parameters.AddWithValue("@depth", MaxFlowDepth);
-        command.Parameters.AddWithValue("@limit", limit);
-
-        return ReadEndpoints(command);
-    }
-
-    /// <summary>Registered services on the composition path down to this symbol.</summary>
-    private List<SymbolLink> FindUpstreamServices(long symbolId, int limit = 50)
-    {
-        using var command = _connection.CreateCommand();
-        command.CommandText = $"""
-            {UpstreamReach}
-            SELECT DISTINCT s.id, s.fqn, s.display, 'Exact'
-            FROM reach
-            JOIN symbols s ON s.id = reach.id
-            WHERE s.id <> @id
-              AND EXISTS (
-                  SELECT 1 FROM service_registrations g
-                  WHERE g.service_symbol_id = s.id OR g.impl_symbol_id = s.id)
-            ORDER BY s.display COLLATE NOCASE, s.fqn
-            LIMIT @limit
-            """;
-        command.Parameters.AddWithValue("@id", symbolId);
-        command.Parameters.AddWithValue("@depth", MaxFlowDepth);
-        command.Parameters.AddWithValue("@limit", limit);
-
-        return ReadLinks(command);
-    }
-
-    // ---- tests --------------------------------------------------------------
-
-    /// <summary>How many related tests one symbol reports.</summary>
-    public const int MaxRelatedTests = 50;
-
-    /// <summary>
-    /// The tests that exercise a symbol, best evidence first.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Three tiers are compiler-derived and therefore exact: the test names the symbol, the
-    /// fixture constructs the type that declares it, or another member of the fixture names
-    /// it. A fixture's own members count because a test class usually builds its subject
-    /// once — in a constructor, a field, or a setup method — and asserts on it from every
-    /// test in the class.
-    /// </para>
-    /// <para>
-    /// The remaining tiers are read off names, namespaces and project references by
-    /// <see cref="TestNaming"/>, and are never exact. The weakest of them — a fixture that
-    /// merely sits in the same namespace — is a fallback, dropped as soon as anything
-    /// better was found: it would otherwise bury three real answers under thirty
-    /// coincidences.
-    /// </para>
-    /// <para>
-    /// Nothing here follows calls transitively. A test that reaches a service through two
-    /// layers of production code is not listed, for the same reason "reached from" walks
-    /// composition rather than calls: one hot method would put the whole suite in every
-    /// answer.
-    /// </para>
-    /// </remarks>
-    public IReadOnlyList<RelatedTest> FindRelatedTests(long symbolId, int limit = MaxRelatedTests)
-    {
-        lock (_gate)
-        {
-            if (GetSymbol(symbolId) is not { } symbol || symbol.Kind is IndexedSymbolKind.Namespace)
-            {
-                return [];
-            }
-
-            // A member is tested through the type that declares it; a type is its own
-            // subject, nested or not.
-            var declaringType = IsType(symbol.Kind) || symbol.ContainerFullyQualifiedName is null
-                ? symbol
-                : GetSymbolByName(symbol.ContainerFullyQualifiedName);
-
-            var best = new Dictionary<long, RelatedTest>();
-
-            foreach (var test in FindTestsReferencing(symbol, declaringType))
-            {
-                Keep(best, test);
-            }
-
-            if (declaringType is not null)
-            {
-                foreach (var test in FindTestsNaming(declaringType))
-                {
-                    Keep(best, test);
-                }
-            }
-
-            var results = best.Values.ToList();
-
-            if (results.Exists(test => test.Strategy < TestRelationStrategy.NamespaceSimilarity))
-            {
-                results.RemoveAll(test => test.Strategy == TestRelationStrategy.NamespaceSimilarity);
-            }
-
-            return
-            [
-                .. results
-                    .OrderBy(test => test.Strategy)
-                    .ThenBy(test => test.Test.QualifiedDisplay, StringComparer.OrdinalIgnoreCase)
-                    .Take(limit),
-            ];
-        }
-
-        static void Keep(Dictionary<long, RelatedTest> best, RelatedTest candidate)
-        {
-            if (!best.TryGetValue(candidate.Test.SymbolId, out var existing) ||
-                candidate.Strategy < existing.Strategy)
-            {
-                best[candidate.Test.SymbolId] = candidate;
-            }
-        }
-    }
-
-    private static bool IsType(IndexedSymbolKind kind) =>
-        kind is IndexedSymbolKind.Class or IndexedSymbolKind.Interface or IndexedSymbolKind.Record
-            or IndexedSymbolKind.Struct or IndexedSymbolKind.Enum or IndexedSymbolKind.Delegate;
-
-    /// <summary>
-    /// Every method carrying a recognised test attribute, with the fixture that declares it.
-    /// </summary>
-    /// <remarks>
-    /// Attributes are already indexed against every symbol, so a test needs no analysis of
-    /// its own: this is the whole of "detect test projects and test methods". The framework
-    /// is whichever attribute matched, and a project is a test project exactly when it
-    /// declares one.
-    /// </remarks>
-    private const string TestMethodSource = """
-        SELECT s.id            AS test_id,
-               s.display       AS test_display,
-               s.fqn           AS test_fqn,
-               s.container_fqn AS fixture_fqn,
-               s.file_path     AS test_file,
-               s.line          AS test_line,
-               s.project_id    AS test_project,
-               MIN(a.attribute_fqn) AS framework
-        FROM symbols s
-        JOIN symbol_attributes a ON a.symbol_id = s.id
-        WHERE s.kind = 'Method' AND a.attribute_fqn IN {0}
-        GROUP BY s.id
-        """;
-
-    /// <summary>The exact tiers: what the compiler recorded between a test and the symbol.</summary>
-    private List<RelatedTest> FindTestsReferencing(IndexedSymbol symbol, IndexedSymbol? declaringType)
-    {
-        using var command = _connection.CreateCommand();
-        var attributes = ParameterList(command, "a", TestFrameworks.MethodAttributes);
-
-        command.CommandText = $"""
-            WITH
-            tests AS ({string.Format(CultureInfo.InvariantCulture, TestMethodSource, attributes)}),
-
-            -- What a test can touch that counts: the symbol, and the constructors of the
-            -- type it belongs to, which is how "instantiates the class under test" is
-            -- written in an index that stores construction as a call to a constructor.
-            subjects(id) AS (
-                SELECT @id
-                UNION
-                SELECT id FROM symbols WHERE kind = 'Constructor' AND container_fqn = @type
-            ),
-            touches AS (
-                SELECT r.source_symbol_id AS src,
-                       MAX(r.target_symbol_id =  @id) AS names,
-                       MAX(r.target_symbol_id <> @id) AS constructs
-                FROM relations r
-                WHERE r.target_symbol_id IN (SELECT id FROM subjects)
-                GROUP BY r.source_symbol_id
-            ),
-            sources AS (
-                SELECT t.src, t.names, t.constructs, s.fqn AS src_fqn, s.container_fqn AS src_owner
-                FROM touches t
-                JOIN symbols s ON s.id = t.src
-            )
-            SELECT tests.test_id, tests.test_display, tests.test_fqn, tests.framework,
-                   f.display, f.id, p.name, tests.test_file, tests.test_line,
-                   MIN(CASE WHEN sources.src = tests.test_id AND sources.names = 1 THEN 0
-                            WHEN sources.constructs = 1                            THEN 1
-                            ELSE 2 END) AS strategy
-            FROM tests
-            -- The test itself, a sibling member of its fixture, or the fixture as a whole.
-            JOIN sources ON sources.src       = tests.test_id
-                         OR sources.src_owner = tests.fixture_fqn
-                         OR sources.src_fqn   = tests.fixture_fqn
-            LEFT JOIN symbols  f ON f.fqn = tests.fixture_fqn
-            LEFT JOIN projects p ON p.id  = tests.test_project
-            GROUP BY tests.test_id
-            """;
-
-        command.Parameters.AddWithValue("@id", symbol.Id);
-        command.Parameters.AddWithValue(
-            "@type", declaringType?.FullyQualifiedName ?? symbol.FullyQualifiedName);
-
-        using var reader = command.ExecuteReader();
-        var results = new List<RelatedTest>();
-
-        while (reader.Read())
-        {
-            var strategy = (TestRelationStrategy)reader.GetInt32(9);
-
-            results.Add(new RelatedTest(
-                ReadTest(reader),
-                strategy,
-                strategy is TestRelationStrategy.DirectReference
-                    ? symbol.Display
-                    : declaringType?.Display ?? symbol.Display));
-        }
-
-        return results;
-    }
-
-    /// <summary>The probable tiers: fixtures whose name or place says what they are about.</summary>
-    private List<RelatedTest> FindTestsNaming(IndexedSymbol type)
-    {
-        var dependents = GetDependentProjects(type.ProjectName);
-
-        var fixtures = new Dictionary<string, TestRelationStrategy>(StringComparer.Ordinal);
-        foreach (var fixture in GetTestFixtures())
-        {
-            if (string.Equals(fixture.FullyQualifiedName, type.FullyQualifiedName, StringComparison.Ordinal) ||
-                fixtures.ContainsKey(fixture.FullyQualifiedName))
-            {
-                continue;
-            }
-
-            var reachable = fixture.ProjectName is { } project && dependents.Contains(project);
-
-            if (TestNaming.Match(fixture, type, reachable) is { } strategy)
-            {
-                fixtures[fixture.FullyQualifiedName] = strategy;
-            }
-        }
-
-        return fixtures.Count == 0
-            ? []
-            :
-            [
-                .. GetTestsInFixtures(fixtures.Keys)
-                    .Select(found => new RelatedTest(found.Test, fixtures[found.Fixture], type.Display)),
-            ];
-    }
-
-    /// <summary>Types declaring at least one test method.</summary>
-    private List<IndexedSymbol> GetTestFixtures()
-    {
-        using var command = _connection.CreateCommand();
-        var attributes = ParameterList(command, "a", TestFrameworks.MethodAttributes);
-
-        command.CommandText = $"""
-            {SelectSymbol}
-            WHERE s.fqn IN (
-                SELECT DISTINCT m.container_fqn
-                FROM symbols m
-                JOIN symbol_attributes a ON a.symbol_id = m.id
-                WHERE m.kind = 'Method' AND a.attribute_fqn IN {attributes}
-            )
-            """;
-
-        return ReadSymbols(command);
-    }
-
-    private List<(string Fixture, TestMethod Test)> GetTestsInFixtures(IReadOnlyCollection<string> fixtures)
-    {
-        using var command = _connection.CreateCommand();
-        var attributes = ParameterList(command, "a", TestFrameworks.MethodAttributes);
-        var names = ParameterList(command, "f", fixtures);
-
-        command.CommandText = $"""
-            WITH tests AS ({string.Format(CultureInfo.InvariantCulture, TestMethodSource, attributes)})
-            SELECT tests.test_id, tests.test_display, tests.test_fqn, tests.framework,
-                   f.display, f.id, p.name, tests.test_file, tests.test_line, tests.fixture_fqn
-            FROM tests
-            LEFT JOIN symbols  f ON f.fqn = tests.fixture_fqn
-            LEFT JOIN projects p ON p.id  = tests.test_project
-            WHERE tests.fixture_fqn IN {names}
-            """;
-
-        using var reader = command.ExecuteReader();
-        var results = new List<(string, TestMethod)>();
-
-        while (reader.Read())
-        {
-            results.Add((reader.GetString(9), ReadTest(reader)));
-        }
-
-        return results;
-    }
-
-    /// <summary>
-    /// The projects that can see a project's types, itself included.
-    /// </summary>
-    /// <remarks>
-    /// Walked backwards over the reference graph so a test project that reaches the
-    /// declaring project through an application project still counts, and matched by name
-    /// because that is how a reference to a project that never loaded is stored.
-    /// </remarks>
-    private HashSet<string> GetDependentProjects(string? projectName)
-    {
-        var dependents = new HashSet<string>(StringComparer.Ordinal);
-
-        if (projectName is null)
-        {
-            return dependents;
-        }
-
-        using var command = _connection.CreateCommand();
-        command.CommandText = """
-            WITH RECURSIVE dependents(name) AS (
-                SELECT @name
-                UNION
-                SELECT p.name
-                FROM project_references r
-                JOIN projects p   ON p.id = r.project_id
-                JOIN dependents d ON d.name = r.target_name
-            )
-            SELECT name FROM dependents
-            """;
-        command.Parameters.AddWithValue("@name", projectName);
-
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
-        {
-            dependents.Add(reader.GetString(0));
-        }
-
-        return dependents;
-    }
-
-    /// <summary>Reads the nine columns every test query selects, in that order.</summary>
-    private static TestMethod ReadTest(SqliteDataReader reader) => new()
-    {
-        SymbolId = reader.GetInt64(0),
-        Display = reader.GetString(1),
-        FullyQualifiedName = reader.GetString(2),
-        Framework = TestFrameworks.FrameworkOf(reader.GetString(3)),
-        ClassDisplay = reader.IsDBNull(4) ? null : reader.GetString(4),
-        ClassSymbolId = reader.IsDBNull(5) ? null : reader.GetInt64(5),
-        ProjectName = reader.IsDBNull(6) ? null : reader.GetString(6),
-        FilePath = reader.IsDBNull(7) ? null : reader.GetString(7),
-        Line = reader.IsDBNull(8) ? null : reader.GetInt32(8),
-    };
-
-    /// <summary>The projects that declare tests, which is what makes a project a test project.</summary>
-    public IReadOnlyList<string> GetTestProjects()
-    {
-        lock (_gate)
-        {
-            using var command = _connection.CreateCommand();
-            var attributes = ParameterList(command, "a", TestFrameworks.MethodAttributes);
-
-            command.CommandText = $"""
-                SELECT DISTINCT p.name
-                FROM symbols s
-                JOIN symbol_attributes a ON a.symbol_id = s.id
-                JOIN projects p          ON p.id = s.project_id
-                WHERE s.kind = 'Method' AND a.attribute_fqn IN {attributes}
-                ORDER BY p.name
-                """;
-
-            using var reader = command.ExecuteReader();
-            var results = new List<string>();
-
-            while (reader.Read())
-            {
-                results.Add(reader.GetString(0));
-            }
-
-            return results;
-        }
-    }
-
-    // ---- impact primitives --------------------------------------------------
-    //
-    // One hop each, exactly like the graph primitives above, because ImpactAnalyzer owns
-    // how far a closure reaches. The fact queries take the closure as a set, so the walk
-    // is done once and its properties are read against it rather than re-derived.
-
-    /// <summary>
-    /// The symbols that depend on any of <paramref name="ids"/>: one hop backwards along
-    /// the given kinds.
-    /// </summary>
-    /// <remarks>
-    /// Backwards is what makes this an impact question rather than a dependency one. An
-    /// edge is stored from the thing that depends to the thing depended upon, so reversing
-    /// it answers "who would have to change with this".
-    /// </remarks>
-    public IReadOnlyList<long> GetDependents(
-        IReadOnlyCollection<long> ids,
-        IReadOnlyCollection<RelationKind> kinds)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-        ArgumentNullException.ThrowIfNull(kinds);
-
-        if (ids.Count == 0 || kinds.Count == 0)
-        {
-            return [];
-        }
-
-        return Read(() =>
-        {
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-            var kindList = KindList(command, kinds);
-
-            command.CommandText = $"""
-                SELECT DISTINCT r.source_symbol_id
-                FROM relations r
-                WHERE r.target_symbol_id IN {idList}
-                  AND r.kind IN {kindList}
-                  AND r.source_symbol_id IS NOT NULL
-                """;
-
-            using var reader = command.ExecuteReader();
-            var results = new List<long>();
-            while (reader.Read())
-            {
-                results.Add(reader.GetInt64(0));
-            }
-
-            return results;
-        });
-    }
-
-    /// <summary>
-    /// The symbols any of <paramref name="ids"/> depend on: one hop forwards along the
-    /// given kinds.
-    /// </summary>
-    /// <remarks>
-    /// The counterpart of <see cref="GetDependents"/>, and needed for the same question.
-    /// A boundary or a configuration read is recorded against the component that performs
-    /// it, which sits <em>below</em> a change rather than above it, so a purely backwards
-    /// closure cannot see what the affected code actually talks to.
-    /// </remarks>
-    public IReadOnlyList<long> GetDependencies(
-        IReadOnlyCollection<long> ids,
-        IReadOnlyCollection<RelationKind> kinds)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-        ArgumentNullException.ThrowIfNull(kinds);
-
-        if (ids.Count == 0 || kinds.Count == 0)
-        {
-            return [];
-        }
-
-        return Read(() =>
-        {
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-            var kindList = KindList(command, kinds);
-
-            command.CommandText = $"""
-                SELECT DISTINCT r.target_symbol_id
-                FROM relations r
-                WHERE r.source_symbol_id IN {idList}
-                  AND r.kind IN {kindList}
-                  AND r.target_symbol_id IS NOT NULL
-                """;
-
-            using var reader = command.ExecuteReader();
-            var results = new List<long>();
-            while (reader.Read())
-            {
-                results.Add(reader.GetInt64(0));
-            }
-
-            return results;
-        });
-    }
-
-    /// <summary>Endpoints whose handler, declaring type or inline dependency is in the set.</summary>
-    public IReadOnlyList<HttpEndpoint> GetEndpointsFor(IReadOnlyCollection<long> ids)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-
-        if (ids.Count == 0)
-        {
-            return [];
-        }
-
-        return Read(() =>
-        {
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-
-            command.CommandText = $"""
-                {SelectEndpoint}
-                WHERE e.handler_symbol_id IN {idList}
-                   OR e.declaring_id IN {idList}
-                   OR e.id IN (SELECT d.endpoint_id FROM endpoint_dependencies d
-                               WHERE d.symbol_id IN {idList})
-                ORDER BY e.route COLLATE NOCASE, e.http_method, e.id
-                """;
-
-            return ReadEndpoints(command);
-        });
-    }
-
-    /// <summary>
-    /// Entities the set reaches: those it reads or writes, and those it declares or maps.
-    /// </summary>
-    public IReadOnlyList<EntityMapping> GetEntitiesFor(IReadOnlyCollection<long> ids)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-
-        if (ids.Count == 0)
-        {
-            return [];
-        }
-
-        return Read(() =>
-        {
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-
-            command.CommandText = $"""
-                {SelectEntity}
-                WHERE e.entity_symbol_id IN (
-                          SELECT r.target_symbol_id FROM relations r
-                          WHERE r.source_symbol_id IN {idList}
-                            AND r.kind IN ('ReadsEntity', 'CreatesEntity', 'ModifiesEntity',
-                                           'DeletesEntity', 'DeclaresEntity', 'ConfiguresEntity'))
-                   OR e.entity_symbol_id IN {idList}
-                   OR e.context_symbol_id IN {idList}
-                ORDER BY e.entity_display COLLATE NOCASE, e.id
-                """;
-
-            return ReadEntities(command);
-        });
-    }
-
-    /// <summary>Infrastructure boundaries the set sits on.</summary>
-    public IReadOnlyList<ExternalDependency> GetExternalDependenciesFor(IReadOnlyCollection<long> ids)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-
-        if (ids.Count == 0)
-        {
-            return [];
-        }
-
-        return Read(() =>
-        {
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-
-            command.CommandText = $"""
-                {SelectExternal}
-                WHERE x.consumer_symbol_id IN {idList}
-                   OR x.client_symbol_id IN {idList}
-                ORDER BY x.technology, x.consumer_display COLLATE NOCASE, x.id
-                """;
-
-            return ReadExternal(command);
-        });
-    }
-
-    /// <summary>Configuration the set reads, and options types within it.</summary>
-    public IReadOnlyList<ConfigurationUsage> GetConfigurationFor(IReadOnlyCollection<long> ids)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-
-        if (ids.Count == 0)
-        {
-            return [];
-        }
-
-        return Read(() =>
-        {
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-
-            command.CommandText = $"""
-                {SelectConfiguration}
-                WHERE c.consumer_symbol_id IN {idList}
-                   OR c.options_symbol_id IN {idList}
-                ORDER BY c.config_key COLLATE NOCASE, c.options_display COLLATE NOCASE, c.id
-                """;
-
-            return ReadConfiguration(command);
-        });
-    }
-
-    /// <summary>
-    /// The subset that are background services, recognised by the hosting types they
-    /// derive from or implement.
-    /// </summary>
-    /// <remarks>
-    /// Matched on the fully qualified name the compiler bound, the way every other
-    /// framework fact is, so a class merely called <c>Worker</c> is not mistaken for one
-    /// and a real one that is not is still found. The relation keeps its target name even
-    /// though <c>BackgroundService</c> is outside the solution, which is what makes this
-    /// answerable from the index at all.
-    /// </remarks>
-    public IReadOnlyList<long> GetWorkersAmong(IReadOnlyCollection<long> ids)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-
-        if (ids.Count == 0)
-        {
-            return [];
-        }
-
-        return Read(() =>
-        {
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-            var hostingList = ParameterList(command, "h", HostingTypes.Select(name => (object)name));
-
-            // The owning type is what derives from BackgroundService, so an impacted
-            // member counts through its container.
-            command.CommandText = $"""
-                SELECT DISTINCT s.id
-                FROM symbols s
-                LEFT JOIN symbols owner ON owner.fqn = s.container_fqn
-                WHERE s.id IN {idList}
-                  AND EXISTS (
-                      SELECT 1 FROM relations r
-                      WHERE r.source_symbol_id IN (s.id, owner.id)
-                        AND r.kind IN ('Inherits', 'Implements')
-                        AND r.target_fqn IN {hostingList})
-                """;
-
-            using var reader = command.ExecuteReader();
-            var results = new List<long>();
-            while (reader.Read())
-            {
-                results.Add(reader.GetInt64(0));
-            }
-
-            return results;
-        });
-    }
-
-    /// <summary>The framework types that make a class a hosted background service.</summary>
-    private static readonly string[] HostingTypes =
-    [
-        "Microsoft.Extensions.Hosting.BackgroundService",
-        "Microsoft.Extensions.Hosting.IHostedService",
-        "Microsoft.Extensions.Hosting.IHostedLifecycleService",
-    ];
-
-    /// <summary>
-    /// A short infrastructure label per symbol, for the graph to badge its nodes with:
-    /// the table an entity maps to, the technology a boundary type talks to, or the fact
-    /// that a type is bound from configuration. Only symbols that have one are returned.
-    /// </summary>
-    public IReadOnlyDictionary<long, string> GetInfrastructureLabels(IReadOnlyCollection<long> ids)
-    {
-        ArgumentNullException.ThrowIfNull(ids);
-
-        lock (_gate)
-        {
-            var labels = new Dictionary<long, string>();
-            if (ids.Count == 0)
-            {
-                return labels;
-            }
-
-            using var command = _connection.CreateCommand();
-            var idList = IdList(command, ids);
-
-            // Ordered least to most specific: a later row overwrites an earlier one, so an
-            // entity that names its table reads as the table rather than as "entity".
-            command.CommandText = $"""
-                SELECT id, label FROM (
-                    SELECT options_symbol_id AS id, 'options' AS label, 0 AS rank
-                    FROM configuration_usages
-                    WHERE options_symbol_id IN {idList}
-                    UNION ALL
-                    SELECT entity_symbol_id,
-                           CASE WHEN table_name IS NULL THEN 'entity'
-                                WHEN schema_name IS NULL THEN table_name
-                                ELSE schema_name || '.' || table_name END,
-                           CASE WHEN table_name IS NULL THEN 1 ELSE 2 END
-                    FROM data_entities
-                    WHERE entity_symbol_id IN {idList}
-                )
-                ORDER BY rank
-                """;
-
-            using (var reader = command.ExecuteReader())
-            {
-                while (reader.Read())
-                {
-                    if (!reader.IsDBNull(0))
-                    {
-                        labels[reader.GetInt64(0)] = reader.GetString(1);
-                    }
-                }
-            }
-
-            using var boundaries = _connection.CreateCommand();
-            var boundaryIds = IdList(boundaries, ids);
-            boundaries.CommandText = $"""
-                SELECT consumer_symbol_id, technology, name
-                FROM external_dependencies
-                WHERE consumer_symbol_id IN {boundaryIds}
-                ORDER BY id
-                """;
-
-            using (var reader = boundaries.ExecuteReader())
-            {
-                while (reader.Read())
-                {
-                    if (reader.IsDBNull(0))
-                    {
-                        continue;
-                    }
-
-                    var technology = Enum.TryParse<ExternalTechnology>(reader.GetString(1), out var parsed)
-                        ? parsed
-                        : ExternalTechnology.HttpApi;
-
-                    labels[reader.GetInt64(0)] = new ExternalDependency
-                    {
-                        Technology = technology,
-                        Binding = ExternalBinding.Call,
-                        ClientFullyQualifiedName = string.Empty,
-                        ClientDisplay = string.Empty,
-                        ConsumerFullyQualifiedName = string.Empty,
-                        ConsumerDisplay = string.Empty,
-                        Name = reader.IsDBNull(2) ? null : reader.GetString(2),
-                    }.Resource;
-                }
-            }
-
-            return labels;
-        }
-    }
+    // ---- diagnostics --------------------------------------------------------
 
     public IReadOnlyList<IndexDiagnostic> GetDiagnostics()
     {
         lock (_gate)
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = """
-                SELECT severity, project, message FROM diagnostics ORDER BY id
-                """;
+            command.CommandText = "SELECT severity, project, message FROM diagnostics ORDER BY id";
 
             using var reader = command.ExecuteReader();
             var results = new List<IndexDiagnostic>();
@@ -1680,9 +394,11 @@ public sealed class SymbolIndexDatabase : IDisposable
         }
     }
 
+    // ---- readers ------------------------------------------------------------
+
     private const string SelectSymbol = """
         SELECT s.id, s.kind, s.name, s.fqn, s.display, p.name, s.namespace,
-               s.container_fqn, s.file_path, s.line, s.start_column, s.end_line, s.accessibility
+               s.container_fqn, s.file_path, s.line, s.start_column, s.accessibility
         FROM symbols s
         LEFT JOIN projects p ON p.id = s.project_id
         """;
@@ -1707,43 +423,7 @@ public sealed class SymbolIndexDatabase : IDisposable
                 FilePath = reader.IsDBNull(8) ? null : reader.GetString(8),
                 Line = reader.IsDBNull(9) ? null : reader.GetInt32(9),
                 Column = reader.IsDBNull(10) ? null : reader.GetInt32(10),
-                EndLine = reader.IsDBNull(11) ? null : reader.GetInt32(11),
-                Accessibility = reader.IsDBNull(12) ? null : reader.GetString(12),
-            });
-        }
-
-        return results;
-    }
-
-    private const string SelectRegistration = """
-        SELECT id, service_fqn, service_display, service_symbol_id,
-               impl_fqn, impl_display, impl_symbol_id,
-               lifetime, kind, provenance, file_path, line, declaring_member
-        FROM service_registrations
-        """;
-
-    private static List<ServiceRegistration> ReadRegistrations(SqliteCommand command)
-    {
-        using var reader = command.ExecuteReader();
-        var results = new List<ServiceRegistration>();
-
-        while (reader.Read())
-        {
-            results.Add(new ServiceRegistration
-            {
-                Id = reader.GetInt64(0),
-                ServiceFullyQualifiedName = reader.GetString(1),
-                ServiceDisplay = reader.GetString(2),
-                ServiceSymbolId = reader.IsDBNull(3) ? null : reader.GetInt64(3),
-                ImplementationFullyQualifiedName = reader.IsDBNull(4) ? null : reader.GetString(4),
-                ImplementationDisplay = reader.IsDBNull(5) ? null : reader.GetString(5),
-                ImplementationSymbolId = reader.IsDBNull(6) ? null : reader.GetInt64(6),
-                Lifetime = Enum.Parse<ServiceLifetime>(reader.GetString(7)),
-                Kind = Enum.Parse<RegistrationKind>(reader.GetString(8)),
-                Provenance = ParseProvenance(reader.GetString(9)),
-                FilePath = reader.IsDBNull(10) ? null : reader.GetString(10),
-                Line = reader.IsDBNull(11) ? null : reader.GetInt32(11),
-                DeclaringMember = reader.IsDBNull(12) ? null : reader.GetString(12),
+                Accessibility = reader.IsDBNull(11) ? null : reader.GetString(11),
             });
         }
 
@@ -1752,7 +432,7 @@ public sealed class SymbolIndexDatabase : IDisposable
 
     private const string SelectEndpoint = """
         SELECT e.id, e.http_method, e.route, e.handler_display, e.handler_fqn, e.handler_symbol_id,
-               e.declaring_fqn, e.declaring_id, e.kind, p.name, e.file_path, e.line,
+               e.kind, p.name, e.file_path, e.line,
                e.requires_auth, e.allows_anonymous, e.policies, e.roles, e.provenance
         FROM endpoints e
         LEFT JOIN projects p ON p.id = e.project_id
@@ -1773,17 +453,15 @@ public sealed class SymbolIndexDatabase : IDisposable
                 HandlerDisplay = reader.GetString(3),
                 HandlerFullyQualifiedName = reader.IsDBNull(4) ? null : reader.GetString(4),
                 HandlerSymbolId = reader.IsDBNull(5) ? null : reader.GetInt64(5),
-                DeclaringTypeFullyQualifiedName = reader.IsDBNull(6) ? null : reader.GetString(6),
-                DeclaringTypeSymbolId = reader.IsDBNull(7) ? null : reader.GetInt64(7),
-                Kind = Enum.Parse<EndpointKind>(reader.GetString(8)),
-                ProjectName = reader.IsDBNull(9) ? null : reader.GetString(9),
-                FilePath = reader.IsDBNull(10) ? null : reader.GetString(10),
-                Line = reader.IsDBNull(11) ? null : reader.GetInt32(11),
-                RequiresAuthorization = reader.GetInt32(12) != 0,
-                AllowsAnonymous = reader.GetInt32(13) != 0,
-                Policies = Split(reader.IsDBNull(14) ? null : reader.GetString(14)),
-                Roles = Split(reader.IsDBNull(15) ? null : reader.GetString(15)),
-                Provenance = ParseProvenance(reader.GetString(16)),
+                Kind = Enum.Parse<EndpointKind>(reader.GetString(6)),
+                ProjectName = reader.IsDBNull(7) ? null : reader.GetString(7),
+                FilePath = reader.IsDBNull(8) ? null : reader.GetString(8),
+                Line = reader.IsDBNull(9) ? null : reader.GetInt32(9),
+                RequiresAuthorization = reader.GetInt32(10) != 0,
+                AllowsAnonymous = reader.GetInt32(11) != 0,
+                Policies = Split(reader.IsDBNull(12) ? null : reader.GetString(12)),
+                Roles = Split(reader.IsDBNull(13) ? null : reader.GetString(13)),
+                Provenance = ParseProvenance(reader.GetString(14)),
             });
         }
 
@@ -1804,17 +482,13 @@ public sealed class SymbolIndexDatabase : IDisposable
         }
 
         using var command = _connection.CreateCommand();
+        var idList = IdList(command, endpoints.Select(endpoint => endpoint.Id));
         command.CommandText = $"""
             SELECT d.endpoint_id, d.symbol_id, d.target_fqn, d.target_display
             FROM endpoint_dependencies d
-            WHERE d.endpoint_id IN ({Placeholders(endpoints.Count)})
+            WHERE d.endpoint_id IN {idList}
             ORDER BY d.endpoint_id, d.id
             """;
-
-        for (var i = 0; i < endpoints.Count; i++)
-        {
-            command.Parameters.AddWithValue($"@p{i}", endpoints[i].Id);
-        }
 
         var byEndpoint = new Dictionary<long, List<SymbolLink>>();
 
@@ -1835,11 +509,6 @@ public sealed class SymbolIndexDatabase : IDisposable
             }
         }
 
-        if (byEndpoint.Count == 0)
-        {
-            return endpoints;
-        }
-
         for (var i = 0; i < endpoints.Count; i++)
         {
             if (byEndpoint.TryGetValue(endpoints[i].Id, out var links))
@@ -1851,212 +520,9 @@ public sealed class SymbolIndexDatabase : IDisposable
         return endpoints;
     }
 
-    private static string Placeholders(int count) =>
-        string.Join(", ", Enumerable.Range(0, count).Select(i => $"@p{i}"));
-
-    private const string SelectEntity = """
-        SELECT e.id, e.entity_fqn, e.entity_display, e.entity_symbol_id,
-               e.context_fqn, e.context_display, e.context_symbol_id, e.set_name,
-               e.table_name, e.schema_name, e.config_fqn, e.config_display, e.config_symbol_id,
-               p.name, e.file_path, e.line
-        FROM data_entities e
-        LEFT JOIN projects p ON p.id = e.project_id
-        """;
-
-    private static List<EntityMapping> ReadEntities(SqliteCommand command)
-    {
-        using var reader = command.ExecuteReader();
-        var results = new List<EntityMapping>();
-
-        while (reader.Read())
-        {
-            results.Add(new EntityMapping
-            {
-                Id = reader.GetInt64(0),
-                EntityFullyQualifiedName = reader.GetString(1),
-                EntityDisplay = reader.GetString(2),
-                EntitySymbolId = reader.IsDBNull(3) ? null : reader.GetInt64(3),
-                ContextFullyQualifiedName = reader.IsDBNull(4) ? null : reader.GetString(4),
-                ContextDisplay = reader.IsDBNull(5) ? null : reader.GetString(5),
-                ContextSymbolId = reader.IsDBNull(6) ? null : reader.GetInt64(6),
-                SetName = reader.IsDBNull(7) ? null : reader.GetString(7),
-                TableName = reader.IsDBNull(8) ? null : reader.GetString(8),
-                Schema = reader.IsDBNull(9) ? null : reader.GetString(9),
-                ConfigurationFullyQualifiedName = reader.IsDBNull(10) ? null : reader.GetString(10),
-                ConfigurationDisplay = reader.IsDBNull(11) ? null : reader.GetString(11),
-                ConfigurationSymbolId = reader.IsDBNull(12) ? null : reader.GetInt64(12),
-                ProjectName = reader.IsDBNull(13) ? null : reader.GetString(13),
-                FilePath = reader.IsDBNull(14) ? null : reader.GetString(14),
-                Line = reader.IsDBNull(15) ? null : reader.GetInt32(15),
-            });
-        }
-
-        return results;
-    }
-
-    private const string SelectMigration = """
-        SELECT m.id, m.name, m.type_fqn, m.type_display, m.type_symbol_id,
-               m.context_fqn, m.context_display, m.context_symbol_id, m.tables,
-               p.name, m.file_path, m.line
-        FROM data_migrations m
-        LEFT JOIN projects p ON p.id = m.project_id
-        """;
-
-    private static List<DataMigration> ReadMigrations(SqliteCommand command)
-    {
-        using var reader = command.ExecuteReader();
-        var results = new List<DataMigration>();
-
-        while (reader.Read())
-        {
-            results.Add(new DataMigration
-            {
-                Id = reader.GetInt64(0),
-                Name = reader.GetString(1),
-                TypeFullyQualifiedName = reader.GetString(2),
-                TypeDisplay = reader.GetString(3),
-                TypeSymbolId = reader.IsDBNull(4) ? null : reader.GetInt64(4),
-                ContextFullyQualifiedName = reader.IsDBNull(5) ? null : reader.GetString(5),
-                ContextDisplay = reader.IsDBNull(6) ? null : reader.GetString(6),
-                ContextSymbolId = reader.IsDBNull(7) ? null : reader.GetInt64(7),
-                Tables = Split(reader.IsDBNull(8) ? null : reader.GetString(8)),
-                ProjectName = reader.IsDBNull(9) ? null : reader.GetString(9),
-                FilePath = reader.IsDBNull(10) ? null : reader.GetString(10),
-                Line = reader.IsDBNull(11) ? null : reader.GetInt32(11),
-            });
-        }
-
-        return results;
-    }
-
-    private const string SelectConfiguration = """
-        SELECT c.id, c.access, c.config_key, c.options_fqn, c.options_display, c.options_symbol_id,
-               c.consumer_fqn, c.consumer_display, c.consumer_symbol_id,
-               p.name, c.file_path, c.line, c.provenance
-        FROM configuration_usages c
-        LEFT JOIN projects p ON p.id = c.project_id
-        """;
-
-    private static List<ConfigurationUsage> ReadConfiguration(SqliteCommand command)
-    {
-        using var reader = command.ExecuteReader();
-        var results = new List<ConfigurationUsage>();
-
-        while (reader.Read())
-        {
-            results.Add(new ConfigurationUsage
-            {
-                Id = reader.GetInt64(0),
-                Access = Enum.Parse<ConfigurationAccess>(reader.GetString(1)),
-                Key = reader.IsDBNull(2) ? null : reader.GetString(2),
-                OptionsFullyQualifiedName = reader.IsDBNull(3) ? null : reader.GetString(3),
-                OptionsDisplay = reader.IsDBNull(4) ? null : reader.GetString(4),
-                OptionsSymbolId = reader.IsDBNull(5) ? null : reader.GetInt64(5),
-                ConsumerFullyQualifiedName = reader.IsDBNull(6) ? null : reader.GetString(6),
-                ConsumerDisplay = reader.IsDBNull(7) ? null : reader.GetString(7),
-                ConsumerSymbolId = reader.IsDBNull(8) ? null : reader.GetInt64(8),
-                ProjectName = reader.IsDBNull(9) ? null : reader.GetString(9),
-                FilePath = reader.IsDBNull(10) ? null : reader.GetString(10),
-                Line = reader.IsDBNull(11) ? null : reader.GetInt32(11),
-                Provenance = ParseProvenance(reader.GetString(12)),
-            });
-        }
-
-        return results;
-    }
-
-    private const string SelectExternal = """
-        SELECT x.id, x.technology, x.binding, x.client_fqn, x.client_display, x.client_symbol_id,
-               x.name, x.consumer_fqn, x.consumer_display, x.consumer_symbol_id,
-               p.name, x.file_path, x.line, x.provenance
-        FROM external_dependencies x
-        LEFT JOIN projects p ON p.id = x.project_id
-        """;
-
-    private static List<ExternalDependency> ReadExternal(SqliteCommand command)
-    {
-        using var reader = command.ExecuteReader();
-        var results = new List<ExternalDependency>();
-
-        while (reader.Read())
-        {
-            results.Add(new ExternalDependency
-            {
-                Id = reader.GetInt64(0),
-                Technology = Enum.Parse<ExternalTechnology>(reader.GetString(1)),
-                Binding = Enum.Parse<ExternalBinding>(reader.GetString(2)),
-                ClientFullyQualifiedName = reader.GetString(3),
-                ClientDisplay = reader.GetString(4),
-                ClientSymbolId = reader.IsDBNull(5) ? null : reader.GetInt64(5),
-                Name = reader.IsDBNull(6) ? null : reader.GetString(6),
-                ConsumerFullyQualifiedName = reader.GetString(7),
-                ConsumerDisplay = reader.GetString(8),
-                ConsumerSymbolId = reader.IsDBNull(9) ? null : reader.GetInt64(9),
-                ProjectName = reader.IsDBNull(10) ? null : reader.GetString(10),
-                FilePath = reader.IsDBNull(11) ? null : reader.GetString(11),
-                Line = reader.IsDBNull(12) ? null : reader.GetInt32(12),
-                Provenance = ParseProvenance(reader.GetString(13)),
-            });
-        }
-
-        return results;
-    }
-
-    /// <summary>Runs a query under the read gate, which is what makes one instance shareable.</summary>
-    private T Read<T>(Func<T> query)
-    {
-        lock (_gate)
-        {
-            return query();
-        }
-    }
-
-    /// <summary>Binds an optional row id and hands the command to one of the readers above.</summary>
-    private List<T> Query<T>(string sql, long? id, Func<SqliteCommand, List<T>> read)
-    {
-        using var command = _connection.CreateCommand();
-        command.CommandText = sql;
-
-        if (id is { } value)
-        {
-            command.Parameters.AddWithValue("@id", value);
-        }
-
-        return read(command);
-    }
-
-    private List<ServiceRegistration> ReadRegistrations(string sql, long? id = null) =>
-        Query(sql, id, ReadRegistrations);
-
-    private List<EntityMapping> ReadEntities(string sql, long? id = null) => Query(sql, id, ReadEntities);
-
-    private List<DataMigration> ReadMigrations(string sql, long? id = null) => Query(sql, id, ReadMigrations);
-
-    private List<ConfigurationUsage> ReadConfiguration(string sql, long? id = null) =>
-        Query(sql, id, ReadConfiguration);
-
-    private List<ExternalDependency> ReadExternal(string sql, long? id = null) => Query(sql, id, ReadExternal);
-
     private static IReadOnlyList<string> Split(string? value) => value is null
         ? []
         : value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-
-    private static List<RelationEdge> ReadEdges(SqliteCommand command)
-    {
-        using var reader = command.ExecuteReader();
-        var results = new List<RelationEdge>();
-
-        while (reader.Read())
-        {
-            results.Add(new RelationEdge(
-                reader.GetInt64(0),
-                reader.GetInt64(1),
-                Enum.Parse<RelationKind>(reader.GetString(2)),
-                ParseProvenance(reader.GetString(3))));
-        }
-
-        return results;
-    }
 
     /// <summary>An unrecognised value is treated as inferred: never over-claim exactness.</summary>
     private static RelationProvenance ParseProvenance(string value) =>
@@ -2085,23 +551,6 @@ public sealed class SymbolIndexDatabase : IDisposable
 
     private static string IdList(SqliteCommand command, IEnumerable<long> ids) =>
         ParameterList(command, "i", ids.Select(id => (object)id));
-
-    private static List<SymbolLink> ReadLinks(SqliteCommand command)
-    {
-        using var reader = command.ExecuteReader();
-        var results = new List<SymbolLink>();
-
-        while (reader.Read())
-        {
-            results.Add(new SymbolLink(
-                reader.IsDBNull(0) ? null : reader.GetInt64(0),
-                reader.GetString(1),
-                reader.GetString(2),
-                ParseProvenance(reader.GetString(3))));
-        }
-
-        return results;
-    }
 
     public void Dispose() => _connection.Dispose();
 }

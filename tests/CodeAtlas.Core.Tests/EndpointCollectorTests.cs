@@ -297,7 +297,7 @@ public class EndpointCollectorTests
     }
 
     [Fact]
-    public async Task Records_the_declaring_type_that_carries_the_dependencies()
+    public async Task Records_the_handler_a_controller_action_runs()
     {
         var endpoints = await CollectAsync("""
                 [Route("users")]
@@ -311,7 +311,6 @@ public class EndpointCollectorTests
             """);
 
         var endpoint = Assert.Single(endpoints);
-        Assert.Equal("Api.UsersController", endpoint.DeclaringTypeFullyQualifiedName);
         Assert.Equal("Api.UsersController.List()", endpoint.HandlerFullyQualifiedName);
         Assert.Equal(EndpointKind.ControllerAction, endpoint.Kind);
     }
